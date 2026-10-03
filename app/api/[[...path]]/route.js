@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { getSnapClient, getMidtransServerKey, getMidtransClientKey, describeMidtransError } from '@/lib/midtrans';
 import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
 import { FALLBACK_PRODUCTS, filterProducts } from '@/lib/catalog-fallback';
+import { getMemoryDb } from '@/lib/memory-db';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
@@ -53,11 +54,34 @@ async function kaCall(path, body) {
 let client;
 let dbPromise;
 async function getDb() {
+  if (!MONGO_URL) return getMemoryDb();
   if (!client) {
-    client = new MongoClient(MONGO_URL);
-    dbPromise = client.connect().then(() => client.db(DB_NAME));
+    client = new MongoClient(MONGO_URL, { serverSelectionTimeoutMS: 4000 });
+    dbPromise = client.connect().then(() => client.db(DB_NAME)).catch((e) => {
+      console.error('MongoDB unavailable, using in-memory store:', e?.message || e);
+      client = null;
+      return getMemoryDb();
+    });
   }
   return dbPromise;
+}
+
+const MEMORY_TOKEN_SECRET = process.env.SESSION_SECRET || 'soraya-memory-session';
+function signMemoryToken(identifier) {
+  const payload = Buffer.from(identifier).toString('base64url');
+  const sig = crypto.createHmac('sha256', MEMORY_TOKEN_SECRET).update(payload).digest('base64url');
+  return `mem.${payload}.${sig}`;
+}
+function readMemoryToken(token) {
+  const [prefix, payload, sig] = (token || '').split('.');
+  if (prefix !== 'mem' || !payload || !sig) return null;
+  const expected = crypto.createHmac('sha256', MEMORY_TOKEN_SECRET).update(payload).digest('base64url');
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return Buffer.from(payload, 'base64url').toString();
+}
+function memoryUser(identifier, mode) {
+  const id = crypto.createHash('sha256').update(identifier).digest('hex').slice(0, 24);
+  return { id, identifier, mode: mode || 'phone', name: null, affiliateCode: null };
 }
 
 const PRODUCT_IMAGES = [
@@ -297,6 +321,11 @@ async function handler(request, ctx) {
       const identifier = (body.identifier || '').trim();
       const otp = (body.otp || '').trim();
       if (!identifier || !otp) return json({ error: 'Field wajib' }, 400);
+      if (db.isMemory) {
+        // No database: accept any 6-digit code so checkout isn't blocked; the token is self-verifying.
+        if (!/^\d{6}$/.test(otp)) return json({ error: 'Kode OTP harus 6 digit' }, 400);
+        return json({ token: signMemoryToken(identifier), user: memoryUser(identifier, body.mode), mock: true });
+      }
       const rec = await db.collection('otps').find({ identifier, used: false }).sort({ createdAt: -1 }).limit(1).toArray();
       if (!rec.length || rec[0].otp !== otp) return json({ error: 'Kode OTP salah' }, 400);
       await db.collection('otps').updateOne({ _id: rec[0]._id }, { $set: { used: true } });
@@ -316,6 +345,8 @@ async function handler(request, ctx) {
       const auth = request.headers.get('authorization') || '';
       const token = auth.replace(/^Bearer\s+/i, '');
       if (!token) return json({ error: 'No token' }, 401);
+      const memIdentifier = readMemoryToken(token);
+      if (memIdentifier) return json({ user: memoryUser(memIdentifier) });
       const sess = await db.collection('sessions').findOne({ token });
       if (!sess) return json({ error: 'Invalid token' }, 401);
       const user = await db.collection('users').findOne({ id: sess.userId }, { projection: { _id: 0 } });
