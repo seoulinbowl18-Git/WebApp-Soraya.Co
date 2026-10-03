@@ -2,11 +2,17 @@ import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  getSnapClient,
+  createSnapTransaction,
+  getMidtransServerKey,
   getMidtransClientKey,
   describeMidtransError,
   sanitizeLineItems,
+  FALLBACK_MIDTRANS_SERVER_KEY,
+  FALLBACK_MIDTRANS_CLIENT_KEY,
 } from '@/lib/midtrans';
+
+const SERVER_KEY = getMidtransServerKey() || FALLBACK_MIDTRANS_SERVER_KEY;
+const CLIENT_KEY = getMidtransClientKey() || FALLBACK_MIDTRANS_CLIENT_KEY;
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,8 +47,7 @@ export async function POST(request) {
       return fail('Body request harus JSON yang valid');
     }
 
-    const snap = getSnapClient();
-    if (!snap) return fail('MIDTRANS_SERVER_KEY_2 belum dikonfigurasi', 500);
+    if (!SERVER_KEY) return fail('Midtrans server key belum dikonfigurasi', 500);
 
     const { lines, error } = sanitizeLineItems(body.items);
     if (error) return fail(error);
@@ -77,7 +82,7 @@ export async function POST(request) {
 
     let tx;
     try {
-      tx = await snap.createTransaction(parameter);
+      tx = await createSnapTransaction(parameter);
     } catch (e) {
       console.error('Midtrans Snap error:', e?.httpStatusCode, e?.ApiResponse || e?.message);
       const upstreamStatus = Number(e?.httpStatusCode) || 0;
@@ -113,7 +118,7 @@ export async function POST(request) {
       orderId: order.id,
       orderNumber,
       total,
-      clientKey: getMidtransClientKey(),
+      clientKey: CLIENT_KEY,
       orderSaved: saved,
     });
   } catch (e) {

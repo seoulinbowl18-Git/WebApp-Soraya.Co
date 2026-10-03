@@ -7,11 +7,13 @@ import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallba
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
-const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
+const FALLBACK_MOBILE_BACKEND = 'https://style-commerce-app-5.preview.emergentagent.com';
+const MOBILE_BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || FALLBACK_MOBILE_BACKEND).replace(/\/$/, '');
 const ADMIN_KEY = 'soraya-admin-2026';
 
 const MIDTRANS_SERVER_KEY = getMidtransServerKey();
-const KA_KEY = process.env.KIRIMINAJA_API_KEY;
+const FALLBACK_KIRIMINAJA_API_KEY = 'v4.local.6tiidsaTjg4MnoKU79DytQq2lwHIxJCSP0zIqZ4WTIVOegVe1gbqzmtZKcil1xlgsHxMRRvAPEoRN947OpSQ10cC0_lUWJASZzRirGzZnQDCdPv5vIAPaJ7_kn6dWGfD-k2Px5PNgwK5tWxEnlxKe-9AKCOqFkeBL4-HGgnI';
+const KA_KEY = (process.env.KIRIMINAJA_API_KEY || '').trim() || FALLBACK_KIRIMINAJA_API_KEY;
 const KA_BASE = process.env.KIRIMINAJA_IS_SANDBOX === 'true' ? 'https://tdev.kiriminaja.com' : 'https://client.kiriminaja.com';
 
 const getSnap = getSnapClient;
@@ -94,6 +96,33 @@ const SEED_PRODUCTS = [
   { name: 'Blouse Satin Noir', category: 'blouse', price: 225000, original: 279000, img: 4 },
   { name: 'Midi Dress Noir Classic', category: 'midi-dress', price: 285000, original: 349000, img: 1 },
 ];
+
+const FALLBACK_PRODUCTS = [
+  { id: 'soraya-001', name: 'Soraya Blouse Linen Beige', category: 'blouse', price: 185000, originalPrice: 245000, img: 3 },
+  { id: 'soraya-002', name: 'Atasan Katun Hitam Minimal', category: 'atasan', price: 165000, originalPrice: 199000, img: 4 },
+  { id: 'soraya-003', name: 'Tunik Rayon Monokrom', category: 'tunik-rayon', price: 215000, originalPrice: 265000, img: 5 },
+  { id: 'soraya-004', name: 'Gamis Maxy Elegant Noir', category: 'gamis-maxy', price: 345000, originalPrice: 425000, img: 1 },
+  { id: 'soraya-005', name: 'Midi Dress Grey Stone', category: 'midi-dress', price: 275000, originalPrice: 325000, img: 9 },
+  { id: 'soraya-006', name: 'Setelan Daily Essentials', category: 'setelan', price: 285000, originalPrice: 349000, img: 7 },
+  { id: 'soraya-007', name: 'Best Seller: Abaya Noir', category: 'best-seller', price: 395000, originalPrice: 495000, img: 10 },
+].map(({ img, ...p }) => ({
+  ...p,
+  categories: [p.category],
+  image: PRODUCT_IMAGES[img],
+  description: 'Modest wear premium dari Soraya.Co. Dibuat dari bahan pilihan untuk kenyamanan dan tampilan elegan.',
+  commissionPct: 10,
+  stock: 50,
+  variants: [],
+  sizes: [],
+  source: 'fallback',
+}));
+
+function filterProducts(items, category, search) {
+  let out = items;
+  if (category && category !== 'all') out = out.filter((p) => (p.categories || [p.category]).includes(category));
+  if (search) out = out.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
+  return out;
+}
 
 async function ensureSeed(db) {
   const col = db.collection('products');
@@ -249,40 +278,32 @@ async function handler(request, ctx) {
   try {
     const params = await ctx.params;
     path = (params?.path || []).join('/');
-    const db = await getDb();
-    await ensureSeed(db);
-    // ---------------- PRODUCTS (hybrid: mobile first, fallback local) ----------------
+
+    // ---------------- PRODUCTS (mobile API first, built-in fallback; never touches MongoDB) ----------------
     if (path === 'products' && method === 'GET') {
       const category = url.searchParams.get('category');
       const search = (url.searchParams.get('search') || '').trim();
-
-      let items = null;
       const mobile = await fetchMobileProducts();
-      if (mobile && mobile.length) items = mobile;
-
-      if (!items) {
-        const q = {};
-        if (category && category !== 'all') q.category = category;
-        if (search) q.name = { $regex: search, $options: 'i' };
-        items = await db.collection('products').find(q, { projection: { _id: 0 } }).toArray();
-        return json({ items, source: 'local' });
-      }
-
-      if (category && category !== 'all') items = items.filter((p) => (p.categories || [p.category]).includes(category));
-      if (search) items = items.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
-      return json({ items, source: 'mobile' });
+      if (mobile && mobile.length) return json({ items: filterProducts(mobile, category, search), source: 'mobile' });
+      return json({ items: filterProducts(FALLBACK_PRODUCTS, category, search), source: 'fallback' });
     }
     if (path.startsWith('products/') && method === 'GET') {
-      const id = path.split('/')[1];
+      const id = decodeURIComponent(path.split('/')[1]);
       const mobile = await fetchMobileProducts();
-      if (mobile) {
-        const found = mobile.find((p) => String(p.id) === String(id));
-        if (found) return json(found);
+      const found = [...(mobile || []), ...FALLBACK_PRODUCTS].find((p) => String(p.id) === String(id));
+      if (found) return json(found);
+      try {
+        const db = await getDb();
+        const item = await db.collection('products').findOne({ id }, { projection: { _id: 0 } });
+        if (item) return json(item);
+      } catch (e) {
+        console.error('Product lookup DB error:', e?.message || e);
       }
-      const item = await db.collection('products').findOne({ id }, { projection: { _id: 0 } });
-      if (!item) return notFound();
-      return json(item);
+      return notFound();
     }
+
+    const db = await getDb();
+    await ensureSeed(db);
 
     // ---------------- AUTH (Mock OTP) ----------------
     if (path === 'auth/login' && method === 'POST') {
