@@ -117,8 +117,7 @@ export default function CartDrawer({ open, onClose }) {
     if (!destination) { toast.error('Pilih kota/kecamatan tujuan'); return; }
     if (!selectedShipping) { toast.error('Pilih kurir pengiriman'); return; }
     setSubmitting(true);
-    // 1) Create order
-    const orderRes = await safeFetch('/api/checkout/session', {
+    const payRes = await safeFetch('/api/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
       body: JSON.stringify({
@@ -128,33 +127,20 @@ export default function CartDrawer({ open, onClose }) {
         affiliate_code: ref || undefined,
       }),
     });
-    if (!orderRes.ok || orderRes.data.success === false) {
-      setSubmitting(false);
-      toast.error(orderRes.data.message || orderRes.data.error || 'Gagal buat pesanan');
-      return;
-    }
-    const orderData = orderRes.data;
-
-    // 2) Get Midtrans Snap token
-    const payRes = await safeFetch('/api/payment/snap', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: orderData.order.id }),
-    });
     setSubmitting(false);
-    if (!payRes.ok || payRes.data.success === false) {
+    if (!payRes.ok || payRes.data.success !== true || !payRes.data.snapToken) {
       toast.error(payRes.data.message || payRes.data.error || 'Gagal buat transaksi Midtrans');
       return;
     }
     const payData = payRes.data;
 
-    // 3) Open Midtrans Snap popup
     if (typeof window === 'undefined' || !window.snap) {
       toast.message('Membuka halaman pembayaran…');
-      window.open(payData.redirect_url, '_blank');
+      window.open(payData.redirectUrl, '_blank');
       clearCart(); onClose(); setStep('cart');
       return;
     }
-    window.snap.pay(payData.token, {
+    window.snap.pay(payData.snapToken, {
       onSuccess: () => { toast.success(`Pembayaran berhasil — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
       onPending: () => { toast.message(`Menunggu pembayaran — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
       onError: () => toast.error('Pembayaran gagal'),

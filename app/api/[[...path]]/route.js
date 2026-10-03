@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'node:crypto';
-import midtransClient from 'midtrans-client';
+import { getSnapClient, getMidtransServerKey, getMidtransClientKey, describeMidtransError } from '@/lib/midtrans';
 import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
 
 const MONGO_URL = process.env.MONGO_URL;
@@ -10,18 +10,11 @@ const DB_NAME = process.env.DB_NAME || 'soraya_co';
 const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
 const ADMIN_KEY = 'soraya-admin-2026';
 
-const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY;
-const MIDTRANS_IS_PRODUCTION = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+const MIDTRANS_SERVER_KEY = getMidtransServerKey();
 const KA_KEY = process.env.KIRIMINAJA_API_KEY;
 const KA_BASE = process.env.KIRIMINAJA_IS_SANDBOX === 'true' ? 'https://tdev.kiriminaja.com' : 'https://client.kiriminaja.com';
 
-let snapClient;
-function getSnap() {
-  if (!snapClient && MIDTRANS_SERVER_KEY) {
-    snapClient = new midtransClient.Snap({ isProduction: MIDTRANS_IS_PRODUCTION, serverKey: MIDTRANS_SERVER_KEY });
-  }
-  return snapClient;
-}
+const getSnap = getSnapClient;
 
 async function kaCall(path, body) {
   if (!KA_KEY) throw new Error('KIRIMINAJA_API_KEY belum di-set di .env');
@@ -541,7 +534,7 @@ async function handler(request, ctx) {
     if (path === 'payment/snap' && method === 'POST') {
       const body = await request.json();
       const snap = getSnap();
-      if (!snap) return json({ error: 'MIDTRANS_SERVER_KEY not configured' }, 500);
+      if (!snap) return json({ success: false, message: 'MIDTRANS_SERVER_KEY_2 belum dikonfigurasi' }, 500);
       const order = await db.collection('orders').findOne({ id: body.orderId });
       if (!order) return notFound();
       const customerName = (order.customer?.name || 'Soraya Customer').split(' ');
@@ -562,10 +555,10 @@ async function handler(request, ctx) {
       try {
         const tx = await snap.createTransaction(parameter);
         await db.collection('orders').updateOne({ id: order.id }, { $set: { midtransToken: tx.token, midtransRedirect: tx.redirect_url, paymentStatus: 'pending', updatedAt: new Date().toISOString() } });
-        return json({ token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: process.env.MIDTRANS_CLIENT_KEY });
+        return json({ success: true, snapToken: tx.token, token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: getMidtransClientKey() });
       } catch (e) {
-        console.error('Midtrans error:', e.ApiResponse || e.message);
-        return json({ error: 'Midtrans: ' + (e.message || 'failed'), upstream: e.ApiResponse || null }, 502);
+        console.error('Midtrans error:', e?.ApiResponse || e?.message);
+        return json({ success: false, message: 'Midtrans: ' + describeMidtransError(e), upstream: e?.ApiResponse || null }, 500);
       }
     }
 
