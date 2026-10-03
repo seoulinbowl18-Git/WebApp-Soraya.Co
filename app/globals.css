@@ -2,11 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+:root { color-scheme: light; }
+
 :root {
-  color-scheme: light;
+  --font-geist: 'Geist', 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
-html, body { background: #ffffff; color: #1A1A1A; }
+html, body {
+  background: #ffffff;
+  color: #1A1A1A;
+  font-family: var(--font-jakarta), 'Plus Jakarta Sans', 'Geist', ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-jakarta { font-family: var(--font-jakarta), 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; }
+.font-geist { font-family: 'Geist', var(--font-jakarta), ui-sans-serif, system-ui, sans-serif; }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

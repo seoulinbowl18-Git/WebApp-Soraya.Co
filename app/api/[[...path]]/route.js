@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
+const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
+const ADMIN_KEY = 'soraya-admin-2026';
 
 let client;
 let dbPromise;
@@ -64,8 +66,7 @@ async function ensureSeed(db) {
       price: p.price,
       originalPrice: p.original,
       image: PRODUCT_IMAGES[p.img],
-      description:
-        'Premium modest wear by Soraya.Co. Crafted from carefully selected fabric for everyday comfort and timeless elegance. Available in multiple sizes.',
+      description: 'Modest wear premium dari Soraya.Co. Dibuat dari bahan pilihan untuk kenyamanan dan tampilan elegan.',
       commissionPct: 10,
       stock: 50,
       createdAt: new Date().toISOString(),
@@ -74,13 +75,8 @@ async function ensureSeed(db) {
   }
 }
 
-function json(data, status = 200) {
-  return NextResponse.json(data, { status });
-}
-
-function notFound() {
-  return json({ error: 'Not found' }, 404);
-}
+function json(data, status = 200) { return NextResponse.json(data, { status }); }
+function notFound() { return json({ error: 'Not found' }, 404); }
 
 function genAffiliateCode(name) {
   const base = (name || 'AFF').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'AFF';
@@ -88,51 +84,205 @@ function genAffiliateCode(name) {
   return `${base}${suffix}`;
 }
 
-async function handler(request, { params }) {
+function orderStatusFor(paymentMethod) {
+  const instant = ['qris', 'dana', 'gopay', 'ovo', 'shopeepay'];
+  if (instant.includes((paymentMethod || '').toLowerCase())) return 'approved';
+  return 'pending_validation';
+}
+
+// ----- Mobile backend product normalization/proxy -----
+function normalizeMobileProduct(p, idx) {
+  const img = p.image || p.imageUrl || p.photo || p.thumbnail || PRODUCT_IMAGES[idx % PRODUCT_IMAGES.length];
+  const originalPrice = p.originalPrice || p.original_price || p.compareAtPrice || (p.price ? Math.round(p.price * 1.2) : null);
+  return {
+    id: String(p.id || p._id || p.sku || uuidv4()),
+    name: p.name || p.title || 'Produk',
+    category: p.category || p.categorySlug || 'all',
+    price: Number(p.price || 0),
+    originalPrice: originalPrice ? Number(originalPrice) : Number(p.price || 0),
+    image: img,
+    description: p.description || p.desc || 'Modest wear premium Soraya.Co.',
+    commissionPct: p.commissionPct || p.commission_pct || 10,
+    stock: p.stock || 100,
+    source: 'mobile',
+  };
+}
+
+async function fetchMobileProducts() {
+  if (!MOBILE_BACKEND) return null;
+  const paths = ['/api/products', '/api/catalog/products', '/products.json', '/api/v1/products'];
+  for (const p of paths) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(MOBILE_BACKEND + p, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) continue;
+      const data = await r.json();
+      const list = Array.isArray(data) ? data : (data.items || data.products || data.data || []);
+      if (list.length) return list.map(normalizeMobileProduct);
+    } catch {}
+  }
+  return null;
+}
+
+async function createOrder(db, body) {
+  const { items, customer, paymentMethod, ref, affiliate_code } = body;
+  const refCode = ref || affiliate_code || null;
+  if (!items || !items.length) return { error: 'Keranjang kosong', status: 400 };
+  let subtotal = 0;
+  let commission = 0;
+  let affiliateValid = false;
+  if (refCode) {
+    const aff = await db.collection('affiliates').findOne({ code: refCode });
+    if (aff) affiliateValid = true;
+  }
+  const resolved = [];
+  for (const it of items) {
+    let p = await db.collection('products').findOne({ id: it.id });
+    // if product not in local DB (came from mobile), snapshot it minimally
+    if (!p && it.name && it.price) p = { id: it.id, name: it.name, price: it.price, image: it.image, commissionPct: 10 };
+    if (!p) continue;
+    const lineTotal = p.price * (it.qty || 1);
+    subtotal += lineTotal;
+    if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
+    resolved.push({ id: p.id, name: p.name, price: p.price, qty: it.qty || 1, image: p.image });
+  }
+  const status = orderStatusFor(paymentMethod);
+  const order = {
+    id: uuidv4(),
+    orderNumber: 'SOR-' + Date.now().toString(36).toUpperCase(),
+    items: resolved,
+    subtotal, total: subtotal,
+    commission: affiliateValid ? commission : 0,
+    ref: affiliateValid ? refCode : null,
+    customer: customer || {},
+    paymentMethod: paymentMethod || null,
+    status,
+    createdAt: new Date().toISOString(),
+  };
+  await db.collection('orders').insertOne(order);
+  return { order: { ...order, _id: undefined } };
+}
+
+function genOtp() { return String(Math.floor(100000 + Math.random() * 900000)); }
+function genToken() { return uuidv4().replace(/-/g, ''); }
+
+async function handler(request, ctx) {
   const db = await getDb();
   await ensureSeed(db);
+  const params = await ctx.params;
   const path = (params?.path || []).join('/');
   const method = request.method;
   const url = new URL(request.url);
+  const adminKey = request.headers.get('x-admin-key');
+  const isAdmin = adminKey === ADMIN_KEY;
 
   try {
-    // ---------------- PRODUCTS ----------------
+    // ---------------- PRODUCTS (hybrid: mobile first, fallback local) ----------------
     if (path === 'products' && method === 'GET') {
       const category = url.searchParams.get('category');
       const search = (url.searchParams.get('search') || '').trim();
-      const q = {};
-      if (category && category !== 'all') q.category = category;
-      if (search) q.name = { $regex: search, $options: 'i' };
-      const items = await db.collection('products').find(q, { projection: { _id: 0 } }).toArray();
-      return json({ items });
+
+      let items = null;
+      const mobile = await fetchMobileProducts();
+      if (mobile && mobile.length) items = mobile;
+
+      if (!items) {
+        const q = {};
+        if (category && category !== 'all') q.category = category;
+        if (search) q.name = { $regex: search, $options: 'i' };
+        items = await db.collection('products').find(q, { projection: { _id: 0 } }).toArray();
+        return json({ items, source: 'local' });
+      }
+
+      if (category && category !== 'all') items = items.filter((p) => p.category === category);
+      if (search) items = items.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
+      return json({ items, source: 'mobile' });
     }
     if (path.startsWith('products/') && method === 'GET') {
       const id = path.split('/')[1];
+      const mobile = await fetchMobileProducts();
+      if (mobile) {
+        const found = mobile.find((p) => String(p.id) === String(id));
+        if (found) return json(found);
+      }
       const item = await db.collection('products').findOne({ id }, { projection: { _id: 0 } });
       if (!item) return notFound();
       return json(item);
+    }
+
+    // ---------------- AUTH (Mock OTP) ----------------
+    if (path === 'auth/login' && method === 'POST') {
+      const body = await request.json();
+      const identifier = (body.identifier || '').trim();
+      const mode = body.mode || 'phone';
+      if (!identifier) return json({ error: 'Identifier wajib' }, 400);
+      const otp = genOtp();
+      await db.collection('otps').insertOne({ identifier, otp, mode, createdAt: new Date().toISOString(), used: false });
+      // In production, send via WhatsApp or Email gateway. For MVP, return devOtp.
+      return json({ ok: true, devOtp: otp, message: 'OTP generated (dev mode)' });
+    }
+
+    if (path === 'auth/verify-otp' && method === 'POST') {
+      const body = await request.json();
+      const identifier = (body.identifier || '').trim();
+      const otp = (body.otp || '').trim();
+      if (!identifier || !otp) return json({ error: 'Field wajib' }, 400);
+      const rec = await db.collection('otps').find({ identifier, used: false }).sort({ createdAt: -1 }).limit(1).toArray();
+      if (!rec.length || rec[0].otp !== otp) return json({ error: 'Kode OTP salah' }, 400);
+      await db.collection('otps').updateOne({ _id: rec[0]._id }, { $set: { used: true } });
+      let user = await db.collection('users').findOne({ identifier });
+      if (!user) {
+        user = { id: uuidv4(), identifier, mode: body.mode || 'phone', name: null, createdAt: new Date().toISOString() };
+        await db.collection('users').insertOne(user);
+      }
+      const token = genToken();
+      await db.collection('sessions').insertOne({ token, userId: user.id, createdAt: new Date().toISOString() });
+      // Attach affiliate code if any affiliate matches this identifier
+      const aff = await db.collection('affiliates').findOne({ $or: [{ email: identifier }, { phone: identifier }] });
+      return json({ token, user: { id: user.id, identifier: user.identifier, name: user.name, affiliateCode: aff?.code || null } });
+    }
+
+    if (path === 'auth/me' && method === 'GET') {
+      const auth = request.headers.get('authorization') || '';
+      const token = auth.replace(/^Bearer\s+/i, '');
+      if (!token) return json({ error: 'No token' }, 401);
+      const sess = await db.collection('sessions').findOne({ token });
+      if (!sess) return json({ error: 'Invalid token' }, 401);
+      const user = await db.collection('users').findOne({ id: sess.userId }, { projection: { _id: 0 } });
+      if (!user) return json({ error: 'User not found' }, 404);
+      const aff = await db.collection('affiliates').findOne({ $or: [{ email: user.identifier }, { phone: user.identifier }] });
+      return json({ user: { ...user, affiliateCode: aff?.code || null } });
     }
 
     // ---------------- AFFILIATE REGISTER ----------------
     if (path === 'affiliate/register' && method === 'POST') {
       const body = await request.json();
       const required = ['fullName', 'email', 'phone'];
-      for (const f of required) if (!body[f]) return json({ error: `Missing ${f}` }, 400);
+      for (const f of required) if (!body[f]) return json({ error: `Field ${f} wajib diisi` }, 400);
       const existing = await db.collection('affiliates').findOne({ email: body.email });
-      if (existing) return json({ error: 'Email already registered', code: existing.code }, 409);
+      if (existing) return json({ error: 'Email sudah terdaftar', code: existing.code }, 409);
       const code = genAffiliateCode(body.fullName);
       const doc = {
-        id: uuidv4(),
-        code,
-        fullName: body.fullName,
-        email: body.email,
-        phone: body.phone,
+        id: uuidv4(), code, fullName: body.fullName, email: body.email, phone: body.phone,
         socialLinks: body.socialLinks || '',
         payout: body.payout || {},
+        status: 'pending',
         createdAt: new Date().toISOString(),
       };
       await db.collection('affiliates').insertOne(doc);
       return json({ affiliate: { ...doc, _id: undefined } });
+    }
+
+    // ---------------- AFFILIATE ACTIVATE ----------------
+    if (path.match(/^affiliate\/[^/]+\/activate$/) && method === 'POST') {
+      if (!isAdmin) return json({ error: 'Unauthorized' }, 401);
+      const code = path.split('/')[1];
+      await db.collection('affiliates').updateOne({ code }, { $set: { status: 'active' } });
+      return json({ ok: true });
     }
 
     // ---------------- AFFILIATE PROFILE + STATS ----------------
@@ -142,39 +292,32 @@ async function handler(request, { params }) {
       if (!aff) return notFound();
       const [clicks, orders, payouts] = await Promise.all([
         db.collection('clicks').countDocuments({ ref: code }),
-        db.collection('orders').find({ ref: code }, { projection: { _id: 0 } }).toArray(),
+        db.collection('orders').find({ ref: code }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray(),
         db.collection('payouts').find({ affiliateCode: code }, { projection: { _id: 0 } }).toArray(),
       ]);
-      const totalCommission = orders.reduce((s, o) => s + (o.commission || 0), 0);
+      const approvedCommission = orders.filter((o) => o.status === 'approved').reduce((s, o) => s + (o.commission || 0), 0);
+      const pendingCommission = orders.filter((o) => o.status === 'pending_validation').reduce((s, o) => s + (o.commission || 0), 0);
       const paidOut = payouts.filter((p) => p.status === 'Paid').reduce((s, p) => s + p.amount, 0);
       const pendingPayouts = payouts.filter((p) => p.status === 'Pending').reduce((s, p) => s + p.amount, 0);
-      const balance = totalCommission - paidOut - pendingPayouts;
-      // Build 14-day trend
+      const available = Math.max(0, approvedCommission - paidOut - pendingPayouts);
+      const totalCommission = approvedCommission + pendingCommission;
       const now = new Date();
-      const days = Array.from({ length: 14 }).map((_, i) => {
-        const d = new Date(now);
-        d.setDate(now.getDate() - (13 - i));
-        return d.toISOString().slice(0, 10);
-      });
-      const trend = days.map((day) => {
-        const commission = orders
-          .filter((o) => (o.createdAt || '').slice(0, 10) === day)
-          .reduce((s, o) => s + (o.commission || 0), 0);
-        return { date: day.slice(5), commission };
-      });
+      const days = Array.from({ length: 30 }).map((_, i) => { const d = new Date(now); d.setDate(now.getDate() - (29 - i)); return d.toISOString().slice(0, 10); });
+      const clickDocs = await db.collection('clicks').find({ ref: code }, { projection: { _id: 0 } }).toArray();
+      const trend = days.map((day) => ({
+        date: day.slice(5),
+        clicks: clickDocs.filter((c) => (c.createdAt || '').slice(0, 10) === day).length,
+        orders: orders.filter((o) => (o.createdAt || '').slice(0, 10) === day).length,
+        commission: orders.filter((o) => (o.createdAt || '').slice(0, 10) === day).reduce((s, o) => s + (o.commission || 0), 0),
+      }));
       return json({
         affiliate: aff,
         stats: {
-          clicks,
-          conversions: orders.length,
-          totalCommission,
-          balance: Math.max(0, balance),
-          pending: pendingPayouts,
-          paidOut,
+          clicks, conversions: orders.length,
+          approvedConversions: orders.filter((o) => o.status === 'approved').length,
+          totalCommission, available, pending: pendingCommission, pendingPayouts, paidOut,
         },
-        trend,
-        orders,
-        payouts,
+        trend, orders, payouts,
       });
     }
 
@@ -185,74 +328,29 @@ async function handler(request, { params }) {
       if (!ref) return json({ ok: false });
       const aff = await db.collection('affiliates').findOne({ code: ref });
       if (!aff) return json({ ok: false, reason: 'invalid_ref' });
-      await db.collection('clicks').insertOne({
-        id: uuidv4(),
-        ref,
-        productId: productId || null,
-        createdAt: new Date().toISOString(),
-      });
+      await db.collection('clicks').insertOne({ id: uuidv4(), ref, productId: productId || null, createdAt: new Date().toISOString() });
       return json({ ok: true });
     }
 
     // ---------------- ORDERS / CHECKOUT ----------------
-    if (path === 'orders' && method === 'POST') {
+    if ((path === 'orders' || path === 'checkout/session') && method === 'POST') {
       const body = await request.json();
-      const { items, customer, paymentMethod, ref } = body;
-      if (!items || !items.length) return json({ error: 'Empty cart' }, 400);
-      let subtotal = 0;
-      let commission = 0;
-      let affiliateValid = false;
-      if (ref) {
-        const aff = await db.collection('affiliates').findOne({ code: ref });
-        if (aff) affiliateValid = true;
-      }
-      // Resolve prices server-side
-      const resolved = [];
-      for (const it of items) {
-        const p = await db.collection('products').findOne({ id: it.id });
-        if (!p) continue;
-        const lineTotal = p.price * (it.qty || 1);
-        subtotal += lineTotal;
-        if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
-        resolved.push({ id: p.id, name: p.name, price: p.price, qty: it.qty || 1 });
-      }
-      const order = {
-        id: uuidv4(),
-        orderNumber: 'SOR-' + Date.now().toString(36).toUpperCase(),
-        items: resolved,
-        subtotal,
-        total: subtotal,
-        commission: affiliateValid ? commission : 0,
-        ref: affiliateValid ? ref : null,
-        customer: customer || {},
-        paymentMethod: paymentMethod || null,
-        status: 'Pending Payment',
-        createdAt: new Date().toISOString(),
-      };
-      await db.collection('orders').insertOne(order);
-      return json({ order: { ...order, _id: undefined } });
+      const result = await createOrder(db, body);
+      if (result.error) return json({ error: result.error }, result.status || 400);
+      return json(result);
     }
 
     // ---------------- PAYOUTS ----------------
     if (path === 'payouts' && method === 'POST') {
       const body = await request.json();
       const { affiliateCode, amount, method: payoutMethod, account } = body;
-      if (!affiliateCode || !amount) return json({ error: 'Missing fields' }, 400);
+      if (!affiliateCode || !amount) return json({ error: 'Field wajib diisi' }, 400);
       const aff = await db.collection('affiliates').findOne({ code: affiliateCode });
       if (!aff) return notFound();
-      const doc = {
-        id: uuidv4(),
-        affiliateCode,
-        amount: Number(amount),
-        method: payoutMethod || 'BCA',
-        account: account || '',
-        status: 'Pending',
-        createdAt: new Date().toISOString(),
-      };
+      const doc = { id: uuidv4(), affiliateCode, amount: Number(amount), method: payoutMethod || 'BCA', account: account || '', status: 'Pending', createdAt: new Date().toISOString() };
       await db.collection('payouts').insertOne(doc);
       return json({ payout: { ...doc, _id: undefined } });
     }
-
     if (path === 'payouts' && method === 'GET') {
       const code = url.searchParams.get('affiliate');
       if (!code) return json({ items: [] });
@@ -260,8 +358,45 @@ async function handler(request, { params }) {
       return json({ items });
     }
 
+    // ---------------- ADMIN ----------------
+    if (path.startsWith('admin/') && !isAdmin) return json({ error: 'Unauthorized' }, 401);
+
+    if (path === 'admin/affiliates' && method === 'GET') {
+      const items = await db.collection('affiliates').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+      return json({ items });
+    }
+    if (path === 'admin/payouts' && method === 'GET') {
+      const items = await db.collection('payouts').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+      return json({ items });
+    }
+    if (path.match(/^admin\/payouts\/[^/]+$/) && method === 'POST') {
+      const id = path.split('/')[2];
+      const body = await request.json();
+      await db.collection('payouts').updateOne({ id }, { $set: { status: body.status, updatedAt: new Date().toISOString() } });
+      return json({ ok: true });
+    }
+    if (path === 'admin/orders' && method === 'GET') {
+      const items = await db.collection('orders').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+      return json({ items });
+    }
+    if (path.match(/^admin\/orders\/[^/]+$/) && method === 'POST') {
+      const id = path.split('/')[2];
+      const body = await request.json();
+      await db.collection('orders').updateOne({ id }, { $set: { status: body.status, updatedAt: new Date().toISOString() } });
+      return json({ ok: true });
+    }
+    if (path.match(/^admin\/products\/[^/]+$/) && method === 'POST') {
+      const id = path.split('/')[2];
+      const body = await request.json();
+      const patch = {};
+      if (body.commissionPct != null) patch.commissionPct = Number(body.commissionPct);
+      if (body.price != null) patch.price = Number(body.price);
+      await db.collection('products').updateOne({ id }, { $set: patch });
+      return json({ ok: true });
+    }
+
     // ---------------- HEALTH ----------------
-    if (path === '' && method === 'GET') return json({ ok: true, service: 'soraya.co' });
+    if (path === '' && method === 'GET') return json({ ok: true, service: 'soraya.co', mobileBackend: MOBILE_BACKEND || null });
 
     return notFound();
   } catch (err) {

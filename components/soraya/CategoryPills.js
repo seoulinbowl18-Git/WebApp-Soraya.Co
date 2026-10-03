@@ -12,9 +12,7 @@ export default function CategoryPills({ value, onChange }) {
               key={c.slug}
               onClick={() => onChange(c.slug)}
               className={`shrink-0 px-4 h-9 text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-black text-white'
-                  : 'bg-[#F5F5F5] text-[#333333] hover:bg-[#EAEAEA]'
+                active ? 'bg-black text-white' : 'bg-[#F5F5F5] text-[#333333] hover:bg-[#EAEAEA]'
               }`}
               style={{ borderRadius: 999 }}
             >

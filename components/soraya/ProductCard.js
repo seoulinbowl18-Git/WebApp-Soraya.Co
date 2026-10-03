@@ -31,11 +31,11 @@ export default function ProductCard({ p }) {
           onClick={(e) => {
             e.preventDefault();
             addToCart(p, 1);
-            toast.success('Added to cart');
+            toast.success('Ditambahkan ke keranjang');
           }}
           className="mt-3 w-full h-10 bg-black text-white text-sm font-semibold hover:bg-[#111111] transition-colors"
         >
-          Add to Cart
+          + Keranjang
         </button>
       </div>
     </div>

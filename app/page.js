@@ -1,11 +1,12 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Header from '@/components/soraya/Header';
 import CategoryPills from '@/components/soraya/CategoryPills';
 import ProductCard from '@/components/soraya/ProductCard';
 import CartDrawer from '@/components/soraya/CartDrawer';
-import { setRefCookie, getRefCookie } from '@/lib/soraya';
+import ReferralTracker from '@/components/soraya/ReferralTracker';
+import { getRefCookie } from '@/lib/soraya';
 import Link from 'next/link';
 
 export default function HomePage() {
@@ -17,20 +18,10 @@ export default function HomePage() {
   const [refBanner, setRefBanner] = useState(null);
   const searchParams = useSearchParams();
 
-  // Capture ?ref= and persist 30d
   useEffect(() => {
-    const r = searchParams.get('ref');
-    if (r) {
-      setRefCookie(r);
-      setRefBanner(r);
-      fetch('/api/affiliate/track-click', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ref: r }),
-      }).catch(() => {});
-    } else {
-      setRefBanner(getRefCookie());
-    }
+    // Read ref after ReferralTracker has stored it
+    const t = setTimeout(() => setRefBanner(getRefCookie()), 50);
+    return () => clearTimeout(t);
   }, [searchParams]);
 
   useEffect(() => {
@@ -46,23 +37,24 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white">
+      <ReferralTracker />
       <Header onSearch={setSearch} searchValue={search} onCartClick={() => setCartOpen(true)} />
       <CategoryPills value={category} onChange={setCategory} />
 
       {refBanner && (
         <div className="bg-[#111111] text-white text-xs text-center py-2 px-4">
-          Shopping with referral <span className="font-bold">{refBanner}</span> — your purchase supports an affiliate partner.
+          Berbelanja dengan kode referral <span className="font-bold">{refBanner}</span> — pembelian kamu mendukung mitra afiliasi.
         </div>
       )}
 
       <section className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
         <div className="flex items-end justify-between mb-5">
           <div>
-            <h1 className="text-2xl md:text-4xl font-black tracking-tight">Modest. Minimal. Soraya.</h1>
-            <p className="text-sm text-[#8A8A8A] mt-1">New arrivals every week. Free shipping across Indonesia.</p>
+            <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight font-geist">Modest. Minimal. Soraya.</h1>
+            <p className="text-sm text-[#8A8A8A] mt-1">Koleksi baru setiap minggu. Gratis ongkir ke seluruh Indonesia.</p>
           </div>
           <Link href="/affiliate" className="hidden md:inline-block text-sm font-semibold border border-black px-4 h-10 leading-10">
-            Become an Affiliate →
+            Gabung Afiliasi →
           </Link>
         </div>
 
@@ -77,7 +69,7 @@ export default function HomePage() {
             ))}
           </div>
         ) : products.length === 0 ? (
-          <div className="py-20 text-center text-[#8A8A8A]">No products found.</div>
+          <div className="py-20 text-center text-[#8A8A8A]">Produk tidak ditemukan.</div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
             {products.map((p) => <ProductCard key={p.id} p={p} />)}
@@ -87,11 +79,11 @@ export default function HomePage() {
 
       <footer className="border-t border-[#EEEEEE] mt-10">
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-8 text-sm text-[#8A8A8A] flex flex-col md:flex-row justify-between gap-3">
-          <div>© {new Date().getFullYear()} Soraya.Co — Modest wear for every day.</div>
+          <div>© {new Date().getFullYear()} Soraya.Co — Modest wear untuk setiap hari.</div>
           <div className="flex gap-6">
-            <Link href="/affiliate" className="hover:text-black">Affiliate</Link>
-            <a className="hover:text-black" href="#">About</a>
-            <a className="hover:text-black" href="#">Contact</a>
+            <Link href="/affiliate" className="hover:text-black">Afiliasi</Link>
+            <a className="hover:text-black" href="#">Tentang</a>
+            <a className="hover:text-black" href="#">Kontak</a>
           </div>
         </div>
       </footer>

@@ -14,7 +14,7 @@ export default function AffiliateRegister() {
 
   async function submit(e) {
     e.preventDefault();
-    if (!form.fullName || !form.email || !form.phone) { toast.error('Please fill required fields'); return; }
+    if (!form.fullName || !form.email || !form.phone) { toast.error('Mohon lengkapi field yang wajib diisi'); return; }
     setLoading(true);
     try {
       const res = await fetch('/api/affiliate/register', {
@@ -29,10 +29,10 @@ export default function AffiliateRegister() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed');
+      if (!res.ok) throw new Error(data.error || 'Pendaftaran gagal');
       setAffiliateCode(data.affiliate.code);
       setResult(data.affiliate);
-      toast.success('Welcome to Soraya.Co Affiliates!');
+      toast.success('Pendaftaran berhasil!');
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -45,12 +45,16 @@ export default function AffiliateRegister() {
       <div className="min-h-screen bg-white">
         <Header />
         <div className="max-w-xl mx-auto px-4 md:px-6 py-16 text-center">
-          <div className="text-xs tracking-widest uppercase text-[#8A8A8A]">Welcome aboard</div>
-          <h1 className="text-3xl md:text-5xl font-black mt-3">You&apos;re in.</h1>
-          <p className="mt-4 text-[#333]">Your affiliate code:</p>
-          <div className="mt-3 text-2xl font-black tracking-widest bg-black text-white py-4 px-6 inline-block">{result.code}</div>
+          <div className="text-xs tracking-widest uppercase text-[#8A8A8A]">Selamat datang</div>
+          <h1 className="text-3xl md:text-5xl font-extrabold mt-3 font-geist">Kamu resmi bergabung.</h1>
+          <p className="mt-4 text-[#333]">Kode afiliasi kamu:</p>
+          <div className="mt-3 text-2xl font-extrabold tracking-widest bg-black text-white py-4 px-6 inline-block font-geist">{result.code}</div>
+          <div className="mt-6 border border-black bg-[#F5F5F5] p-4 text-sm text-left">
+            <div className="font-bold">Status: Menunggu Verifikasi Admin</div>
+            <div className="text-[#333] mt-1">Akun afiliasi kamu sedang diverifikasi oleh tim Soraya.Co. Kamu sudah bisa menyiapkan link & QR, komisi akan terhitung saat akun diaktifkan.</div>
+          </div>
           <div className="mt-6">
-            <button onClick={() => router.push('/affiliate/dashboard')} className="h-12 px-6 bg-black text-white font-semibold">Go to Dashboard →</button>
+            <button onClick={() => router.push('/affiliate/dashboard')} className="h-12 px-6 bg-black text-white font-semibold">Ke Dashboard →</button>
           </div>
         </div>
       </div>
@@ -61,26 +65,26 @@ export default function AffiliateRegister() {
     <div className="min-h-screen bg-white">
       <Header />
       <section className="max-w-xl mx-auto px-4 md:px-6 py-10">
-        <Link href="/affiliate" className="text-sm text-[#8A8A8A] hover:text-black">← Back</Link>
-        <h1 className="text-3xl md:text-5xl font-black mt-3">Join the Program</h1>
-        <p className="text-sm text-[#8A8A8A] mt-2">Fill in your details to get your affiliate code.</p>
+        <Link href="/affiliate" className="text-sm text-[#8A8A8A] hover:text-black">← Kembali</Link>
+        <h1 className="text-3xl md:text-5xl font-extrabold mt-3 font-geist">Daftar Program Afiliasi</h1>
+        <p className="text-sm text-[#8A8A8A] mt-2">Isi data berikut untuk mendapatkan kode afiliasi kamu.</p>
 
         <form onSubmit={submit} className="mt-8 space-y-4">
-          <Field label="Full name *"><input className="input" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
+          <Field label="Nama lengkap *"><input className="input" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
           <Field label="Email *"><input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Phone number *"><input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-          <Field label="Social media profile links"><input placeholder="Instagram, TikTok, etc." className="input" value={form.socialLinks} onChange={(e) => setForm({ ...form, socialLinks: e.target.value })} /></Field>
+          <Field label="Nomor WhatsApp *"><input className="input" placeholder="08" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
+          <Field label="Link profil sosial media"><input placeholder="Instagram, TikTok, dll." className="input" value={form.socialLinks} onChange={(e) => setForm({ ...form, socialLinks: e.target.value })} /></Field>
           <div className="pt-2 border-t border-[#EEEEEE]" />
-          <div className="text-xs uppercase tracking-widest text-[#8A8A8A]">Payout account</div>
-          <Field label="Method">
+          <div className="text-xs uppercase tracking-widest text-[#8A8A8A]">Rekening pencairan</div>
+          <Field label="Bank / E-Wallet">
             <select className="input" value={form.payoutMethod} onChange={(e) => setForm({ ...form, payoutMethod: e.target.value })}>
               {PAYOUT_METHODS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label="Account holder name"><input className="input" value={form.accountName} onChange={(e) => setForm({ ...form, accountName: e.target.value })} /></Field>
-          <Field label="Account number"><input className="input" value={form.accountNumber} onChange={(e) => setForm({ ...form, accountNumber: e.target.value })} /></Field>
+          <Field label="Nama pemilik rekening"><input className="input" value={form.accountName} onChange={(e) => setForm({ ...form, accountName: e.target.value })} /></Field>
+          <Field label="Nomor rekening / nomor HP"><input className="input" value={form.accountNumber} onChange={(e) => setForm({ ...form, accountNumber: e.target.value })} /></Field>
 
-          <button disabled={loading} className="w-full h-12 bg-black text-white font-semibold disabled:opacity-40">{loading ? 'Creating…' : 'Create Affiliate Account'}</button>
+          <button disabled={loading} className="w-full h-12 bg-black text-white font-semibold disabled:opacity-40">{loading ? 'Memproses…' : 'Daftar Sebagai Afiliasi'}</button>
         </form>
 
         <style jsx>{`
