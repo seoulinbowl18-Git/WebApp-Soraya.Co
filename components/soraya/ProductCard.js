@@ -5,14 +5,21 @@ import { toast } from 'sonner';
 
 export default function ProductCard({ p }) {
   const img = imgUrl(p.image, 600, 750, 70);
+  const hasDiscount = p.originalPrice && p.originalPrice > p.price;
+  const discountPct = hasDiscount ? Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100) : 0;
   return (
     <div className="group">
       <Link href={`/product/${p.id}`} className="block">
         <div className="relative overflow-hidden bg-[#F5F5F5]" style={{ aspectRatio: '4 / 5' }}>
           <img src={img} alt={p.name} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform" />
-          {p.originalPrice > p.price && (
-            <div className="absolute top-2 left-2 bg-black text-white text-[10px] font-bold px-2 py-1">
-              -{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)}%
+          {hasDiscount && (
+            <div className="absolute top-2 left-2 bg-[#D32F2F] text-white text-xs font-extrabold px-2.5 py-1 font-geist tracking-tight">
+              -{discountPct}%
+            </div>
+          )}
+          {p.variants && p.variants.length > 1 && (
+            <div className="absolute bottom-2 left-2 bg-white/95 text-[#1A1A1A] text-[10px] font-bold px-2 py-1 border border-[#E5E5E5]">
+              {p.variants.length} VARIAN
             </div>
           )}
         </div>
@@ -23,7 +30,7 @@ export default function ProductCard({ p }) {
         </Link>
         <div className="mt-1 flex items-baseline gap-2">
           <span className="text-sm font-bold text-black">{formatIDR(p.price)}</span>
-          {p.originalPrice > p.price && (
+          {hasDiscount && (
             <span className="text-xs text-[#8A8A8A] line-through">{formatIDR(p.originalPrice)}</span>
           )}
         </div>

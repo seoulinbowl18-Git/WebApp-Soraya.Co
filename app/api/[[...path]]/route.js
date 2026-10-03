@@ -116,7 +116,7 @@ function normalizeMobileProduct(p, idx) {
     category,
     categories: Array.isArray(p.categories) ? p.categories : [category],
     price,
-    originalPrice: originalPrice ? Number(originalPrice) : price,
+    originalPrice: originalPrice ? Number(originalPrice) : null,
     image: img,
     description: p.description || p.desc || 'Modest wear premium Soraya.Co.',
     commissionPct: p.commissionPct || p.commission_pct || 10,
