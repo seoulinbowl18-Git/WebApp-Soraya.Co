@@ -3,6 +3,7 @@ import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'node:crypto';
 import midtransClient from 'midtrans-client';
+import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
@@ -471,28 +472,54 @@ async function handler(request, ctx) {
       return json({ ok: true });
     }
 
-    // ---------------- SHIPPING (KiriminAja) ----------------
-    // Primary + alias routes
+    // ---------------- SHIPPING (KiriminAja with local fallback) ----------------
     if ((path === 'shipping/destinations' || path === 'shipping/search-location') && method === 'GET') {
       const search = (url.searchParams.get('search') || url.searchParams.get('q') || '').trim();
-      if (search.length < 3) return json({ success: true, items: [], message: 'Ketik minimal 3 huruf' });
+      if (search.length < 2) return json({ success: true, items: [], message: 'Ketik minimal 2 huruf', source: 'none' });
+      // 1) Try KiriminAja first
       try {
         const data = await kaCall('/api/mitra/v2/get_address_by_name', { search });
-        return json({ success: true, items: data.data || [] });
+        return json({ success: true, items: data.data || [], source: 'kiriminaja' });
       } catch (e) {
-        console.error('KA destinations error:', e.message);
-        return json({ success: false, items: [], message: e.message, upstream: e.upstream || null }, 200);
+        // 2) Fallback to local catalog — never block user
+        const items = searchFallbackDistricts(search);
+        const isIpBlock = /not allowed|IP address/i.test(e.message || '');
+        return json({
+          success: true,
+          items,
+          source: 'fallback',
+          notice: isIpBlock
+            ? 'Mode fallback aktif (API KiriminAja menolak IP server). Daftar area terbatas pada kota/kecamatan utama.'
+            : 'Mode fallback aktif (API KiriminAja: ' + e.message + ')',
+        });
       }
     }
+
     if ((path === 'shipping/rates' || path === 'shipping/calculate-cost') && method === 'POST') {
       let body = {};
       try { body = await request.json(); } catch { body = {}; }
-      const destination = Number(body.destinationDistrictId || body.destination);
+      const destinationRaw = body.destinationDistrictId || body.destination;
       const weight = Math.max(100, Number(body.weight || 1000));
       const itemValue = Number(body.itemValue || body.item_value || 0);
+      if (!destinationRaw) return json({ success: false, options: [], message: 'destinationDistrictId wajib diisi' }, 200);
+
+      // Local fallback district (never block user)
+      if (typeof destinationRaw === 'string' && destinationRaw.startsWith('LOCAL-')) {
+        const options = getFallbackRates(destinationRaw, itemValue);
+        return json({
+          success: true,
+          options,
+          source: 'fallback',
+          notice: 'Tarif estimasi — admin akan konfirmasi ongkir final sebelum pengiriman.',
+        });
+      }
+
+      const destination = Number(destinationRaw);
       const origin = Number(body.originDistrictId || body.origin || process.env.KIRIMINAJA_ORIGIN_DISTRICT_ID || 0);
-      if (!destination) return json({ success: false, options: [], message: 'destinationDistrictId wajib diisi' }, 200);
-      if (!origin) return json({ success: false, options: [], message: 'KIRIMINAJA_ORIGIN_DISTRICT_ID belum di-set di .env (lakukan setelah IP di-whitelist)' }, 200);
+      if (!origin) {
+        // Also fallback if origin not configured
+        return json({ success: false, options: [], message: 'Origin KiriminAja belum di-set. Pilih area lain dari daftar fallback.' }, 200);
+      }
       try {
         const data = await kaCall('/api/mitra/v6.1/shipping_price', {
           origin, destination, weight,
@@ -503,7 +530,7 @@ async function handler(request, ctx) {
           service: x.service, service_name: x.service_name || x.service, service_type: x.service_type || null,
           estimated_days: x.etd || x.estimated_days || null, price: Number(x.cost || x.price || 0),
         })).filter((x) => x.price > 0);
-        return json({ success: true, options });
+        return json({ success: true, options, source: 'kiriminaja' });
       } catch (e) {
         console.error('KA rates error:', e.message);
         return json({ success: false, options: [], message: e.message, upstream: e.upstream || null }, 200);

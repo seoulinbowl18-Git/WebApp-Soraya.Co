@@ -22,7 +22,9 @@ export default function CartDrawer({ open, onClose }) {
   const [loginOpen, setLoginOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [addrError, setAddrError] = useState('');
+  const [addrNotice, setAddrNotice] = useState('');
   const [ratesError, setRatesError] = useState('');
+  const [ratesNotice, setRatesNotice] = useState('');
   const searchTimer = useRef(null);
 
   useEffect(() => {
