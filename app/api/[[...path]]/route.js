@@ -1,11 +1,45 @@
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'node:crypto';
+import midtransClient from 'midtrans-client';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
 const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
 const ADMIN_KEY = 'soraya-admin-2026';
+
+const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY;
+const MIDTRANS_IS_PRODUCTION = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+const KA_KEY = process.env.KIRIMINAJA_API_KEY;
+const KA_BASE = process.env.KIRIMINAJA_IS_SANDBOX === 'true' ? 'https://tdev.kiriminaja.com' : 'https://client.kiriminaja.com';
+
+let snapClient;
+function getSnap() {
+  if (!snapClient && MIDTRANS_SERVER_KEY) {
+    snapClient = new midtransClient.Snap({ isProduction: MIDTRANS_IS_PRODUCTION, serverKey: MIDTRANS_SERVER_KEY });
+  }
+  return snapClient;
+}
+
+async function kaCall(path, body) {
+  if (!KA_KEY) throw new Error('KIRIMINAJA_API_KEY not set');
+  const r = await fetch(`${KA_BASE}${path}`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${KA_KEY}` },
+    body: JSON.stringify(body || {}),
+    cache: 'no-store',
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.status === false) {
+    const msg = data.text || data.message || `KiriminAja HTTP ${r.status}`;
+    const err = new Error(msg);
+    err.upstream = data;
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
 
 let client;
 let dbPromise;
@@ -148,7 +182,7 @@ async function fetchMobileProducts() {
 }
 
 async function createOrder(db, body) {
-  const { items, customer, paymentMethod, ref, affiliate_code } = body;
+  const { items, customer, paymentMethod, ref, affiliate_code, shipping } = body;
   const refCode = ref || affiliate_code || null;
   if (!items || !items.length) return { error: 'Keranjang kosong', status: 400 };
   let subtotal = 0;
@@ -161,25 +195,35 @@ async function createOrder(db, body) {
   const resolved = [];
   for (const it of items) {
     let p = await db.collection('products').findOne({ id: it.id });
-    // if product not in local DB (came from mobile), snapshot it minimally
+    // handle "id::variant::size" composite
+    if (!p && typeof it.id === 'string' && it.id.includes('::')) {
+      const base = it.id.split('::')[0];
+      p = await db.collection('products').findOne({ id: base });
+    }
     if (!p && it.name && it.price) p = { id: it.id, name: it.name, price: it.price, image: it.image, commissionPct: 10 };
     if (!p) continue;
-    const lineTotal = p.price * (it.qty || 1);
+    const unitPrice = Number(it.price || p.price);
+    const lineTotal = unitPrice * (it.qty || 1);
     subtotal += lineTotal;
     if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
-    resolved.push({ id: p.id, name: p.name, price: p.price, qty: it.qty || 1, image: p.image });
+    resolved.push({ id: String(it.id), name: it.name || p.name, price: unitPrice, qty: it.qty || 1, image: it.image || p.image });
   }
-  const status = orderStatusFor(paymentMethod);
+  const shippingCost = shipping?.price ? Number(shipping.price) : 0;
+  const total = subtotal + shippingCost;
   const order = {
     id: uuidv4(),
     orderNumber: 'SOR-' + Date.now().toString(36).toUpperCase(),
     items: resolved,
-    subtotal, total: subtotal,
+    subtotal,
+    shipping: shipping || null,
+    shippingCost,
+    total,
     commission: affiliateValid ? commission : 0,
     ref: affiliateValid ? refCode : null,
     customer: customer || {},
     paymentMethod: paymentMethod || null,
-    status,
+    paymentStatus: 'pending',
+    status: 'pending_validation',
     createdAt: new Date().toISOString(),
   };
   await db.collection('orders').insertOne(order);
@@ -412,6 +456,92 @@ async function handler(request, ctx) {
       if (body.price != null) patch.price = Number(body.price);
       await db.collection('products').updateOne({ id }, { $set: patch });
       return json({ ok: true });
+    }
+
+    // ---------------- SHIPPING (KiriminAja) ----------------
+    if (path === 'shipping/destinations' && method === 'GET') {
+      const search = (url.searchParams.get('search') || '').trim();
+      if (search.length < 3) return json({ items: [] });
+      try {
+        const data = await kaCall('/api/mitra/v2/get_address_by_name', { search });
+        return json({ items: data.data || [] });
+      } catch (e) {
+        return json({ error: e.message, upstream: e.upstream || null }, 502);
+      }
+    }
+    if (path === 'shipping/rates' && method === 'POST') {
+      const body = await request.json();
+      const destination = Number(body.destinationDistrictId);
+      const weight = Math.max(100, Number(body.weight || 1000));
+      const itemValue = Number(body.itemValue || 0);
+      const origin = Number(body.originDistrictId || process.env.KIRIMINAJA_ORIGIN_DISTRICT_ID || 0);
+      if (!destination || !origin) return json({ error: 'Origin & destination district id wajib' }, 400);
+      try {
+        const data = await kaCall('/api/mitra/v6.1/shipping_price', {
+          origin, destination, weight,
+          length: 1, width: 1, height: 1,
+          item_value: itemValue, insurance: 0, courier: [],
+        });
+        const options = (data.results || data.data || []).map((x) => ({
+          service: x.service, service_name: x.service_name || x.service, service_type: x.service_type || null,
+          estimated_days: x.etd || x.estimated_days || null, price: Number(x.cost || x.price || 0),
+        })).filter((x) => x.price > 0);
+        return json({ options });
+      } catch (e) {
+        return json({ error: e.message, upstream: e.upstream || null }, 502);
+      }
+    }
+
+    // ---------------- PAYMENT (Midtrans Snap) ----------------
+    if (path === 'payment/snap' && method === 'POST') {
+      const body = await request.json();
+      const snap = getSnap();
+      if (!snap) return json({ error: 'MIDTRANS_SERVER_KEY not configured' }, 500);
+      const order = await db.collection('orders').findOne({ id: body.orderId });
+      if (!order) return notFound();
+      const customerName = (order.customer?.name || 'Soraya Customer').split(' ');
+      const parameter = {
+        transaction_details: { order_id: order.orderNumber, gross_amount: Math.round(order.total) },
+        item_details: [
+          ...order.items.map((it) => ({ id: String(it.id).slice(0, 50), name: String(it.name).slice(0, 50), price: Math.round(it.price), quantity: it.qty })),
+          ...(order.shipping ? [{ id: 'SHIP', name: `Ongkir ${order.shipping.service_name || order.shipping.service}`.slice(0, 50), price: Math.round(order.shipping.price || 0), quantity: 1 }] : []),
+        ],
+        customer_details: {
+          first_name: customerName[0] || 'Soraya',
+          last_name: customerName.slice(1).join(' ') || 'Customer',
+          email: order.customer?.email || 'buyer@soraya.co',
+          phone: order.customer?.phone || '08000000000',
+        },
+        enabled_payments: ['other_qris', 'bank_transfer', 'gopay', 'ovo', 'shopeepay', 'dana'],
+      };
+      try {
+        const tx = await snap.createTransaction(parameter);
+        await db.collection('orders').updateOne({ id: order.id }, { $set: { midtransToken: tx.token, midtransRedirect: tx.redirect_url, paymentStatus: 'pending', updatedAt: new Date().toISOString() } });
+        return json({ token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: process.env.MIDTRANS_CLIENT_KEY });
+      } catch (e) {
+        console.error('Midtrans error:', e.ApiResponse || e.message);
+        return json({ error: 'Midtrans: ' + (e.message || 'failed'), upstream: e.ApiResponse || null }, 502);
+      }
+    }
+
+    if (path === 'payment/notification' && method === 'POST') {
+      const n = await request.json();
+      if (!MIDTRANS_SERVER_KEY) return json({ error: 'no key' }, 500);
+      const expected = crypto.createHash('sha512')
+        .update(`${n.order_id}${n.status_code}${n.gross_amount}${MIDTRANS_SERVER_KEY}`)
+        .digest('hex');
+      if (expected !== n.signature_key) return json({ error: 'invalid signature' }, 401);
+      let status = 'pending';
+      if (n.transaction_status === 'settlement') status = 'paid';
+      else if (n.transaction_status === 'capture') status = n.fraud_status === 'accept' ? 'paid' : 'pending';
+      else if (n.transaction_status === 'cancel' || n.transaction_status === 'deny' || n.transaction_status === 'expire' || n.transaction_status === 'failure') status = 'failed';
+      const order = await db.collection('orders').findOne({ orderNumber: n.order_id });
+      if (!order) return json({ ok: false }, 404);
+      const newOrderStatus = status === 'paid' ? 'approved' : (status === 'failed' ? 'cancelled' : order.status);
+      // never downgrade from paid
+      const patch = { paymentStatus: order.paymentStatus === 'paid' ? 'paid' : status, transactionStatus: n.transaction_status, paymentType: n.payment_type || null, midtransTransactionId: n.transaction_id || null, status: newOrderStatus, updatedAt: new Date().toISOString() };
+      await db.collection('orders').updateOne({ orderNumber: n.order_id }, { $set: patch });
+      return json({ received: true });
     }
 
     // ---------------- HEALTH ----------------
