@@ -7,6 +7,7 @@ import ProductCard from '@/components/soraya/ProductCard';
 import CartDrawer from '@/components/soraya/CartDrawer';
 import ReferralTracker from '@/components/soraya/ReferralTracker';
 import { getRefCookie } from '@/lib/soraya';
+import { FALLBACK_PRODUCTS, filterProducts } from '@/lib/catalog-fallback';
 import Link from 'next/link';
 
 export default function HomePage() {
@@ -29,10 +30,19 @@ export default function HomePage() {
     const params = new URLSearchParams();
     if (category && category !== 'all') params.set('category', category);
     if (search) params.set('search', search);
-    fetch('/api/products?' + params.toString())
-      .then((r) => r.json())
-      .then((d) => setProducts(d.items || []))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    fetch('/api/products?' + params.toString(), { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => {
+        if (cancelled) return;
+        const items = Array.isArray(d.items) ? d.items : [];
+        setProducts(items.length || category !== 'all' || search ? items : FALLBACK_PRODUCTS);
+      })
+      .catch(() => { if (!cancelled) setProducts(filterProducts(FALLBACK_PRODUCTS, category, search)); })
+      .finally(() => { clearTimeout(timer); if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; clearTimeout(timer); ctrl.abort(); };
   }, [category, search]);
 
   return (

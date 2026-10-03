@@ -112,6 +112,18 @@ export default function CartDrawer({ open, onClose }) {
     if (!data.options || data.options.length === 0) setRatesError('Belum ada kurir yang mendukung area ini.');
   }
 
+  function waitForSnap(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      if (typeof window === 'undefined') return resolve(false);
+      if (window.snap) return resolve(true);
+      const started = Date.now();
+      const iv = setInterval(() => {
+        if (window.snap) { clearInterval(iv); resolve(true); }
+        else if (Date.now() - started > timeoutMs) { clearInterval(iv); resolve(false); }
+      }, 100);
+    });
+  }
+
   async function proceedToPay() {
     if (!form.name || !form.phone || !form.address) { toast.error('Mohon isi nama, nomor WhatsApp, dan alamat lengkap'); return; }
     if (!destination) { toast.error('Pilih kota/kecamatan tujuan'); return; }
@@ -134,7 +146,8 @@ export default function CartDrawer({ open, onClose }) {
     }
     const payData = payRes.data;
 
-    if (typeof window === 'undefined' || !window.snap) {
+    const snapReady = await waitForSnap();
+    if (!snapReady) {
       toast.message('Membuka halaman pembayaran…');
       window.open(payData.redirectUrl, '_blank');
       clearCart(); onClose(); setStep('cart');

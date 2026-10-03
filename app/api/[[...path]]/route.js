@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'node:crypto';
 import { getSnapClient, getMidtransServerKey, getMidtransClientKey, describeMidtransError } from '@/lib/midtrans';
 import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
+import { FALLBACK_PRODUCTS, filterProducts } from '@/lib/catalog-fallback';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
@@ -97,32 +98,6 @@ const SEED_PRODUCTS = [
   { name: 'Midi Dress Noir Classic', category: 'midi-dress', price: 285000, original: 349000, img: 1 },
 ];
 
-const FALLBACK_PRODUCTS = [
-  { id: 'soraya-001', name: 'Soraya Blouse Linen Beige', category: 'blouse', price: 185000, originalPrice: 245000, img: 3 },
-  { id: 'soraya-002', name: 'Atasan Katun Hitam Minimal', category: 'atasan', price: 165000, originalPrice: 199000, img: 4 },
-  { id: 'soraya-003', name: 'Tunik Rayon Monokrom', category: 'tunik-rayon', price: 215000, originalPrice: 265000, img: 5 },
-  { id: 'soraya-004', name: 'Gamis Maxy Elegant Noir', category: 'gamis-maxy', price: 345000, originalPrice: 425000, img: 1 },
-  { id: 'soraya-005', name: 'Midi Dress Grey Stone', category: 'midi-dress', price: 275000, originalPrice: 325000, img: 9 },
-  { id: 'soraya-006', name: 'Setelan Daily Essentials', category: 'setelan', price: 285000, originalPrice: 349000, img: 7 },
-  { id: 'soraya-007', name: 'Best Seller: Abaya Noir', category: 'best-seller', price: 395000, originalPrice: 495000, img: 10 },
-].map(({ img, ...p }) => ({
-  ...p,
-  categories: [p.category],
-  image: PRODUCT_IMAGES[img],
-  description: 'Modest wear premium dari Soraya.Co. Dibuat dari bahan pilihan untuk kenyamanan dan tampilan elegan.',
-  commissionPct: 10,
-  stock: 50,
-  variants: [],
-  sizes: [],
-  source: 'fallback',
-}));
-
-function filterProducts(items, category, search) {
-  let out = items;
-  if (category && category !== 'all') out = out.filter((p) => (p.categories || [p.category]).includes(category));
-  if (search) out = out.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
-  return out;
-}
 
 async function ensureSeed(db) {
   const col = db.collection('products');
