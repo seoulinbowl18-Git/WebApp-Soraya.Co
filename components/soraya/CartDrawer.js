@@ -21,6 +21,8 @@ export default function CartDrawer({ open, onClose }) {
   const [auth, setAuthState] = useState(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [addrError, setAddrError] = useState('');
+  const [ratesError, setRatesError] = useState('');
   const searchTimer = useRef(null);
 
   useEffect(() => {
@@ -52,22 +54,39 @@ export default function CartDrawer({ open, onClose }) {
     setStep('address');
   }
 
+  // Safe fetch helper that never throws on non-JSON responses
+  async function safeFetch(url, init) {
+    try {
+      const r = await fetch(url, init);
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        const text = await r.text().catch(() => '');
+        return { ok: false, data: { success: false, message: `Server mengembalikan ${ct || 'response'} (HTTP ${r.status}). ${text.slice(0, 100)}` } };
+      }
+      const data = await r.json().catch(() => ({ success: false, message: 'Response tidak valid' }));
+      return { ok: r.ok, data };
+    } catch (e) {
+      return { ok: false, data: { success: false, message: 'Koneksi gagal: ' + (e.message || 'network') } };
+    }
+  }
+
   // Debounced destination search
   useEffect(() => {
     if (step !== 'address') return;
+    setAddrError('');
     if (addrQuery.trim().length < 3) { setAddrResults([]); return; }
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(async () => {
       setAddrLoading(true);
-      try {
-        const r = await fetch('/api/shipping/destinations?search=' + encodeURIComponent(addrQuery.trim()));
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || 'Gagal cari area');
-        setAddrResults(d.items || []);
-      } catch (e) {
-        toast.error(e.message);
+      const { ok, data } = await safeFetch('/api/shipping/search-location?search=' + encodeURIComponent(addrQuery.trim()));
+      setAddrLoading(false);
+      if (!ok || data.success === false) {
         setAddrResults([]);
-      } finally { setAddrLoading(false); }
+        setAddrError(data.message || 'Tidak bisa memuat daftar area');
+        return;
+      }
+      setAddrResults(data.items || []);
+      if (!data.items || data.items.length === 0) setAddrError('Area tidak ditemukan. Coba kata kunci lain.');
     }, 350);
   }, [addrQuery, step]);
 
@@ -75,19 +94,20 @@ export default function CartDrawer({ open, onClose }) {
     setDestination(dest);
     setAddrResults([]);
     setAddrQuery(dest.text);
-    setRates([]); setSelectedShipping(null);
+    setRates([]); setSelectedShipping(null); setRatesError('');
     setRatesLoading(true);
-    try {
-      const r = await fetch('/api/shipping/rates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ destinationDistrictId: dest.id, weight: Math.max(500, cart.reduce((s, i) => s + 500 * i.qty, 0)), itemValue: subtotal }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Gagal ambil ongkir');
-      setRates(d.options || []);
-      if (!d.options || !d.options.length) toast.message('Tidak ada kurir yang mendukung area ini');
-    } catch (e) { toast.error(e.message); } finally { setRatesLoading(false); }
+    const { ok, data } = await safeFetch('/api/shipping/calculate-cost', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destinationDistrictId: dest.id, weight: Math.max(500, cart.reduce((s, i) => s + 500 * i.qty, 0)), itemValue: subtotal }),
+    });
+    setRatesLoading(false);
+    if (!ok || data.success === false) {
+      setRatesError(data.message || 'Gagal menghitung ongkir');
+      return;
+    }
+    setRates(data.options || []);
+    if (!data.options || data.options.length === 0) setRatesError('Belum ada kurir yang mendukung area ini.');
   }
 
   async function proceedToPay() {
@@ -95,43 +115,49 @@ export default function CartDrawer({ open, onClose }) {
     if (!destination) { toast.error('Pilih kota/kecamatan tujuan'); return; }
     if (!selectedShipping) { toast.error('Pilih kurir pengiriman'); return; }
     setSubmitting(true);
-    try {
-      // 1) Create order
-      const orderRes = await fetch('/api/checkout/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
-        body: JSON.stringify({
-          items: cart.map((c) => ({ id: c.id, qty: c.qty, name: c.name, price: c.price, image: c.image })),
-          customer: { name: form.name, phone: form.phone, email: form.email, address: form.address, destination },
-          shipping: selectedShipping,
-          affiliate_code: ref || undefined,
-        }),
-      });
-      const orderData = await orderRes.json();
-      if (!orderRes.ok) throw new Error(orderData.error || 'Gagal buat pesanan');
+    // 1) Create order
+    const orderRes = await safeFetch('/api/checkout/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}) },
+      body: JSON.stringify({
+        items: cart.map((c) => ({ id: c.id, qty: c.qty, name: c.name, price: c.price, image: c.image })),
+        customer: { name: form.name, phone: form.phone, email: form.email, address: form.address, destination },
+        shipping: selectedShipping,
+        affiliate_code: ref || undefined,
+      }),
+    });
+    if (!orderRes.ok || orderRes.data.success === false) {
+      setSubmitting(false);
+      toast.error(orderRes.data.message || orderRes.data.error || 'Gagal buat pesanan');
+      return;
+    }
+    const orderData = orderRes.data;
 
-      // 2) Get Midtrans Snap token
-      const payRes = await fetch('/api/payment/snap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderData.order.id }),
-      });
-      const payData = await payRes.json();
-      if (!payRes.ok) throw new Error(payData.error || 'Gagal buat transaksi Midtrans');
+    // 2) Get Midtrans Snap token
+    const payRes = await safeFetch('/api/payment/snap', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: orderData.order.id }),
+    });
+    setSubmitting(false);
+    if (!payRes.ok || payRes.data.success === false) {
+      toast.error(payRes.data.message || payRes.data.error || 'Gagal buat transaksi Midtrans');
+      return;
+    }
+    const payData = payRes.data;
 
-      // 3) Open Midtrans Snap
-      if (typeof window === 'undefined' || !window.snap) {
-        toast.error('Midtrans Snap belum siap. Buka manual: ' + payData.redirect_url);
-        window.open(payData.redirect_url, '_blank');
-      } else {
-        window.snap.pay(payData.token, {
-          onSuccess: () => { toast.success(`Pembayaran berhasil — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
-          onPending: () => { toast.message(`Menunggu pembayaran — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
-          onError: (e) => toast.error('Pembayaran gagal'),
-          onClose: () => toast.message('Popup pembayaran ditutup. Order tersimpan sebagai pending.'),
-        });
-      }
-    } catch (e) { toast.error(e.message); } finally { setSubmitting(false); }
+    // 3) Open Midtrans Snap popup
+    if (typeof window === 'undefined' || !window.snap) {
+      toast.message('Membuka halaman pembayaran…');
+      window.open(payData.redirect_url, '_blank');
+      clearCart(); onClose(); setStep('cart');
+      return;
+    }
+    window.snap.pay(payData.token, {
+      onSuccess: () => { toast.success(`Pembayaran berhasil — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
+      onPending: () => { toast.message(`Menunggu pembayaran — ${payData.orderNumber}`); clearCart(); onClose(); setStep('cart'); },
+      onError: () => toast.error('Pembayaran gagal'),
+      onClose: () => toast.message('Popup pembayaran ditutup. Order tersimpan sebagai pending.'),
+    });
   }
 
   if (!open) return null;
@@ -200,6 +226,11 @@ export default function CartDrawer({ open, onClose }) {
                   <input className="w-full h-11 border border-[#E5E5E5] pl-9 pr-3 text-sm" placeholder="Ketik min. 3 huruf (contoh: Menteng)" value={addrQuery} onChange={(e) => { setAddrQuery(e.target.value); setDestination(null); setRates([]); setSelectedShipping(null); }} />
                 </div>
                 {addrLoading && <div className="text-xs text-[#8A8A8A] mt-2">Mencari…</div>}
+                {!addrLoading && addrError && (
+                  <div className="mt-2 text-xs bg-[#F5F5F5] border border-[#D32F2F] text-[#D32F2F] p-2.5">
+                    {addrError}
+                  </div>
+                )}
                 {addrResults.length > 0 && (
                   <div className="mt-2 border border-[#E5E5E5] max-h-56 overflow-y-auto divide-y divide-[#EEEEEE]">
                     {addrResults.map((a) => (
@@ -213,6 +244,11 @@ export default function CartDrawer({ open, onClose }) {
                 <div className="border-t border-[#EEEEEE] pt-3">
                   <div className="text-xs font-semibold text-[#333] mb-1.5 flex items-center gap-2"><Truck size={14} /> Pilih kurir</div>
                   {ratesLoading && <div className="text-xs text-[#8A8A8A]">Menghitung ongkir…</div>}
+                  {!ratesLoading && ratesError && (
+                    <div className="mb-2 text-xs bg-[#F5F5F5] border border-[#D32F2F] text-[#D32F2F] p-2.5">
+                      {ratesError}
+                    </div>
+                  )}
                   <div className="space-y-2">
                     {rates.map((r, idx) => {
                       const active = selectedShipping?.service === r.service && selectedShipping?.service_name === r.service_name;
@@ -226,7 +262,7 @@ export default function CartDrawer({ open, onClose }) {
                         </button>
                       );
                     })}
-                    {!ratesLoading && rates.length === 0 && destination && (
+                    {!ratesLoading && !ratesError && rates.length === 0 && destination && (
                       <div className="text-xs text-[#8A8A8A] bg-[#F5F5F5] p-3">Tidak ada tarif tersedia untuk area ini.</div>
                     )}
                   </div>

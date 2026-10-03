@@ -23,14 +23,26 @@ function getSnap() {
 }
 
 async function kaCall(path, body) {
-  if (!KA_KEY) throw new Error('KIRIMINAJA_API_KEY not set');
-  const r = await fetch(`${KA_BASE}${path}`, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${KA_KEY}` },
-    body: JSON.stringify(body || {}),
-    cache: 'no-store',
-  });
-  const data = await r.json().catch(() => ({}));
+  if (!KA_KEY) throw new Error('KIRIMINAJA_API_KEY belum di-set di .env');
+  let r;
+  try {
+    r = await fetch(`${KA_BASE}${path}`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${KA_KEY}` },
+      body: JSON.stringify(body || {}),
+      cache: 'no-store',
+    });
+  } catch (netErr) {
+    throw new Error('Tidak bisa menghubungi KiriminAja: ' + (netErr.message || 'network error'));
+  }
+  const ct = r.headers.get('content-type') || '';
+  let data = {};
+  if (ct.includes('application/json')) {
+    try { data = await r.json(); } catch { data = {}; }
+  } else {
+    const text = await r.text().catch(() => '');
+    data = { status: false, text: text.slice(0, 200) || `HTTP ${r.status}` };
+  }
   if (!r.ok || data.status === false) {
     const msg = data.text || data.message || `KiriminAja HTTP ${r.status}`;
     const err = new Error(msg);
@@ -234,16 +246,17 @@ function genOtp() { return String(Math.floor(100000 + Math.random() * 900000)); 
 function genToken() { return uuidv4().replace(/-/g, ''); }
 
 async function handler(request, ctx) {
-  const db = await getDb();
-  await ensureSeed(db);
-  const params = await ctx.params;
-  const path = (params?.path || []).join('/');
   const method = request.method;
   const url = new URL(request.url);
   const adminKey = request.headers.get('x-admin-key');
   const isAdmin = adminKey === ADMIN_KEY;
+  let path = '';
 
   try {
+    const params = await ctx.params;
+    path = (params?.path || []).join('/');
+    const db = await getDb();
+    await ensureSeed(db);
     // ---------------- PRODUCTS (hybrid: mobile first, fallback local) ----------------
     if (path === 'products' && method === 'GET') {
       const category = url.searchParams.get('category');
@@ -459,23 +472,27 @@ async function handler(request, ctx) {
     }
 
     // ---------------- SHIPPING (KiriminAja) ----------------
-    if (path === 'shipping/destinations' && method === 'GET') {
-      const search = (url.searchParams.get('search') || '').trim();
-      if (search.length < 3) return json({ items: [] });
+    // Primary + alias routes
+    if ((path === 'shipping/destinations' || path === 'shipping/search-location') && method === 'GET') {
+      const search = (url.searchParams.get('search') || url.searchParams.get('q') || '').trim();
+      if (search.length < 3) return json({ success: true, items: [], message: 'Ketik minimal 3 huruf' });
       try {
         const data = await kaCall('/api/mitra/v2/get_address_by_name', { search });
-        return json({ items: data.data || [] });
+        return json({ success: true, items: data.data || [] });
       } catch (e) {
-        return json({ error: e.message, upstream: e.upstream || null }, 502);
+        console.error('KA destinations error:', e.message);
+        return json({ success: false, items: [], message: e.message, upstream: e.upstream || null }, 200);
       }
     }
-    if (path === 'shipping/rates' && method === 'POST') {
-      const body = await request.json();
-      const destination = Number(body.destinationDistrictId);
+    if ((path === 'shipping/rates' || path === 'shipping/calculate-cost') && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch { body = {}; }
+      const destination = Number(body.destinationDistrictId || body.destination);
       const weight = Math.max(100, Number(body.weight || 1000));
-      const itemValue = Number(body.itemValue || 0);
-      const origin = Number(body.originDistrictId || process.env.KIRIMINAJA_ORIGIN_DISTRICT_ID || 0);
-      if (!destination || !origin) return json({ error: 'Origin & destination district id wajib' }, 400);
+      const itemValue = Number(body.itemValue || body.item_value || 0);
+      const origin = Number(body.originDistrictId || body.origin || process.env.KIRIMINAJA_ORIGIN_DISTRICT_ID || 0);
+      if (!destination) return json({ success: false, options: [], message: 'destinationDistrictId wajib diisi' }, 200);
+      if (!origin) return json({ success: false, options: [], message: 'KIRIMINAJA_ORIGIN_DISTRICT_ID belum di-set di .env (lakukan setelah IP di-whitelist)' }, 200);
       try {
         const data = await kaCall('/api/mitra/v6.1/shipping_price', {
           origin, destination, weight,
@@ -486,9 +503,10 @@ async function handler(request, ctx) {
           service: x.service, service_name: x.service_name || x.service, service_type: x.service_type || null,
           estimated_days: x.etd || x.estimated_days || null, price: Number(x.cost || x.price || 0),
         })).filter((x) => x.price > 0);
-        return json({ options });
+        return json({ success: true, options });
       } catch (e) {
-        return json({ error: e.message, upstream: e.upstream || null }, 502);
+        console.error('KA rates error:', e.message);
+        return json({ success: false, options: [], message: e.message, upstream: e.upstream || null }, 200);
       }
     }
 
@@ -547,10 +565,10 @@ async function handler(request, ctx) {
     // ---------------- HEALTH ----------------
     if (path === '' && method === 'GET') return json({ ok: true, service: 'soraya.co', mobileBackend: MOBILE_BACKEND || null });
 
-    return notFound();
+    return json({ success: false, message: 'Not found', path }, 404);
   } catch (err) {
-    console.error('API error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    console.error('API fatal error on', path, ':', err?.message || err);
+    return json({ success: false, message: err?.message || 'Server error', path }, 500);
   }
 }
 
