@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import AffiliateShell from '@/components/soraya/AffiliateShell';
-import { getAffiliateCode, formatIDR } from '@/lib/soraya';
+import { getAffiliateCode, formatIDR, imgUrl } from '@/lib/soraya';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -66,7 +66,7 @@ export default function AffiliateLinks() {
             <div className="mt-3 max-h-96 overflow-y-auto divide-y divide-[#EEEEEE]">
               {products.map((p) => (
                 <button key={p.id} onClick={() => { setSelectedId(p.id); generate(`${origin}/product/${p.id}`); }} className={`w-full text-left flex gap-3 py-3 px-2 ${selectedId === p.id ? 'bg-[#F5F5F5]' : ''}`}>
-                  <img src={`${p.image}?auto=format&fit=crop&w=120&h=150&q=50`} className="w-12 h-16 object-cover bg-[#F5F5F5]" alt="" />
+                  <img src={imgUrl(p.image, 120, 150, 50)} className="w-12 h-16 object-cover bg-[#F5F5F5]" alt="" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium line-clamp-2">{p.name}</div>
                     <div className="text-xs text-[#8A8A8A] mt-0.5">{formatIDR(p.price)} · {p.commissionPct || 10}% komisi</div>

@@ -1,10 +1,10 @@
 'use client';
 import Link from 'next/link';
-import { formatIDR, addToCart } from '@/lib/soraya';
+import { formatIDR, addToCart, imgUrl } from '@/lib/soraya';
 import { toast } from 'sonner';
 
 export default function ProductCard({ p }) {
-  const img = `${p.image}?auto=format&fit=crop&w=600&h=750&q=70`;
+  const img = imgUrl(p.image, 600, 750, 70);
   return (
     <div className="group">
       <Link href={`/product/${p.id}`} className="block">

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Header from '@/components/soraya/Header';
 import CartDrawer from '@/components/soraya/CartDrawer';
 import ReferralTracker from '@/components/soraya/ReferralTracker';
-import { formatIDR, addToCart, getRefCookie } from '@/lib/soraya';
+import { formatIDR, addToCart, getRefCookie, imgUrl } from '@/lib/soraya';
 import { toast } from 'sonner';
 import { ChevronLeft } from 'lucide-react';
 
@@ -35,7 +35,7 @@ export default function ProductPage() {
       </div>
       <section className="max-w-7xl mx-auto px-4 md:px-6 pb-10 grid md:grid-cols-2 gap-6 md:gap-10">
         <div className="bg-[#F5F5F5]" style={{ aspectRatio: '4 / 5' }}>
-          <img src={`${p.image}?auto=format&fit=crop&w=1200&h=1500&q=80`} alt={p.name} className="w-full h-full object-cover" />
+          <img src={imgUrl(p.image, 1200, 1500, 80)} alt={p.name} className="w-full h-full object-cover" />
         </div>
         <div>
           <div className="text-xs uppercase tracking-widest text-[#8A8A8A]">{p.category.replace('-', ' ')}</div>

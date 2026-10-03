@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { X, Minus, Plus, Trash2 } from 'lucide-react';
-import { getCart, updateCartQty, removeFromCart, formatIDR, getRefCookie, clearCart, PAYMENT_METHODS } from '@/lib/soraya';
+import { getCart, updateCartQty, removeFromCart, formatIDR, getRefCookie, clearCart, PAYMENT_METHODS, imgUrl } from '@/lib/soraya';
 import { getAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import LoginModal from './LoginModal';
@@ -79,7 +79,7 @@ export default function CartDrawer({ open, onClose }) {
             ) : (
               cart.map((item) => (
                 <div key={item.id} className="flex gap-3 p-4 border-b border-[#EEEEEE]">
-                  <img src={`${item.image || ''}?auto=format&fit=crop&w=200&h=250&q=60`} alt="" className="w-16 h-20 object-cover bg-[#F5F5F5]" />
+                  <img src={imgUrl(item.image, 200, 250, 60)} alt="" className="w-16 h-20 object-cover bg-[#F5F5F5]" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium line-clamp-2 text-[#1A1A1A]">{item.name}</div>
                     <div className="text-sm font-bold mt-1">{formatIDR(item.price)}</div>

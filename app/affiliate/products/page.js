@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import AffiliateShell from '@/components/soraya/AffiliateShell';
-import { getAffiliateCode, formatIDR } from '@/lib/soraya';
+import { getAffiliateCode, formatIDR, imgUrl } from '@/lib/soraya';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Copy } from 'lucide-react';
@@ -39,7 +39,7 @@ export default function AffiliateProducts() {
           return (
             <div key={p.id} className="border border-[#E5E5E5]">
               <div className="relative bg-[#F5F5F5]" style={{ aspectRatio: '4 / 5' }}>
-                <img src={`${p.image}?auto=format&fit=crop&w=500&h=625&q=65`} alt="" className="w-full h-full object-cover" />
+                <img src={imgUrl(p.image, 500, 625, 65)} alt="" className="w-full h-full object-cover" />
                 <div className="absolute top-2 left-2 bg-black text-white text-[10px] font-bold px-2 py-1">{pct}% KOMISI</div>
               </div>
               <div className="p-3">

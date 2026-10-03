@@ -91,19 +91,38 @@ function orderStatusFor(paymentMethod) {
 }
 
 // ----- Mobile backend product normalization/proxy -----
+function absolutizeImage(img) {
+  if (!img) return null;
+  if (/^https?:\/\//i.test(img)) return img;
+  if (!MOBILE_BACKEND) return img;
+  return MOBILE_BACKEND.replace(/\/$/, '') + (img.startsWith('/') ? img : '/' + img);
+}
 function normalizeMobileProduct(p, idx) {
-  const img = p.image || p.imageUrl || p.photo || p.thumbnail || PRODUCT_IMAGES[idx % PRODUCT_IMAGES.length];
-  const originalPrice = p.originalPrice || p.original_price || p.compareAtPrice || (p.price ? Math.round(p.price * 1.2) : null);
+  const rawImg = p.image || p.imageUrl || p.photo || p.thumbnail || (p.variants && p.variants[0] && p.variants[0].image) || PRODUCT_IMAGES[idx % PRODUCT_IMAGES.length];
+  const img = absolutizeImage(rawImg);
+  const originalPrice = p.originalPrice || p.original_price || p.compareAtPrice;
+  // Category: support `category` (string) or `categories` (array)
+  let category = 'all';
+  if (Array.isArray(p.categories) && p.categories.length) category = p.categories[0];
+  else if (p.category) category = p.category;
+  else if (p.categorySlug) category = p.categorySlug;
+  // Price
+  const price = Number(p.price || 0);
+  // Variants (map images absolute too)
+  const variants = Array.isArray(p.variants) ? p.variants.map((v) => ({ ...v, image: absolutizeImage(v.image) })) : [];
   return {
     id: String(p.id || p._id || p.sku || uuidv4()),
     name: p.name || p.title || 'Produk',
-    category: p.category || p.categorySlug || 'all',
-    price: Number(p.price || 0),
-    originalPrice: originalPrice ? Number(originalPrice) : Number(p.price || 0),
+    category,
+    categories: Array.isArray(p.categories) ? p.categories : [category],
+    price,
+    originalPrice: originalPrice ? Number(originalPrice) : price,
     image: img,
     description: p.description || p.desc || 'Modest wear premium Soraya.Co.',
     commissionPct: p.commissionPct || p.commission_pct || 10,
-    stock: p.stock || 100,
+    stock: p.stock != null ? Number(p.stock) : 100,
+    variants,
+    sizes: p.sizes || [],
     source: 'mobile',
   };
 }
@@ -198,7 +217,7 @@ async function handler(request, ctx) {
         return json({ items, source: 'local' });
       }
 
-      if (category && category !== 'all') items = items.filter((p) => p.category === category);
+      if (category && category !== 'all') items = items.filter((p) => (p.categories || [p.category]).includes(category));
       if (search) items = items.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
       return json({ items, source: 'mobile' });
     }
