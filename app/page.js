@@ -1,6 +1,7 @@
 
 'use client';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+
 import { useSearchParams } from 'next/navigation';
 import Header from '@/components/soraya/Header';
 import CategoryPills from '@/components/soraya/CategoryPills';
@@ -10,7 +11,8 @@ import ReferralTracker from '@/components/soraya/ReferralTracker';
 import { getRefCookie } from '@/lib/soraya';
 import Link from 'next/link';
 
-export default function HomePage() {
+ function HomePageContent() {⁠
+
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
@@ -91,5 +93,12 @@ export default function HomePage() {
 
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
     </div>
+  );
+}
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
+      <HomePageContent />
+    </Suspense>
   );
 }
