@@ -1,13 +1,10 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
-import { getMemoryDb } from '@/lib/memory-db';
-import { FALLBACK_PRODUCTS } from '@/lib/catalog-fallback';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
 
-// Komerce API Keys dari Vercel Environment Variables
 const KOMERCE_SHIPPING_KEY = process.env.KOMERCE_SHIPPING_KEY;
 const KOMERCE_PAYMENT_KEY = process.env.KOMERCE_PAYMENT_KEY;
 
@@ -15,7 +12,7 @@ let cachedClient = null;
 let cachedDb = null;
 
 async function getDb() {
-  if (!MONGO_URL) return getMemoryDb();
+  if (!MONGO_URL) return null;
   if (cachedDb) return cachedDb;
   if (!cachedClient) {
     cachedClient = new MongoClient(MONGO_URL, { connectTimeoutMS: 8000, socketTimeoutMS: 10000 });
@@ -25,7 +22,7 @@ async function getDb() {
   return cachedDb;
 }
 
-// Helper 1: Hitung Ongkir Komerce
+// 1. Hitung Ongkir Komerce
 async function calculateKomerceShipping(destination, weightGrams, courier) {
   try {
     const res = await fetch('https://api.komerce.id/v1/shipping/cost', {
@@ -48,7 +45,7 @@ async function calculateKomerceShipping(destination, weightGrams, courier) {
   }
 }
 
-// Helper 2: Buat QRIS Komerce (QRISLY)
+// 2. Generate QRIS Komerce
 async function createKomerceQris(orderId, amount, customerName, customerEmail) {
   try {
     const res = await fetch('https://api.komerce.id/v1/payment/qrisly/create', {
@@ -77,7 +74,6 @@ async function createKomerceQris(orderId, amount, customerName, customerEmail) {
   }
 }
 
-// Handler Checkout Utama
 async function handleCheckout(req) {
   try {
     const body = await req.json();
@@ -92,32 +88,32 @@ async function handleCheckout(req) {
     let commission = 0;
     let affiliateValid = false;
 
-    if (refCode) {
+    if (db && refCode) {
       const aff = await db.collection('affiliates').findOne({ code: refCode });
       if (aff) affiliateValid = true;
     }
 
     const resolved = [];
     for (const it of items) {
-      let p = await db.collection('products').findOne({ id: it.id });
-      if (!p && typeof it.id === 'string' && it.id.includes(':::')) {
-        const base = it.id.split(':::')[0];
-        p = await db.collection('products').findOne({ id: base });
+      let p = null;
+      if (db) {
+        p = await db.collection('products').findOne({ id: it.id });
+        if (!p && typeof it.id === 'string' && it.id.includes(':::')) {
+          const base = it.id.split(':::')[0];
+          p = await db.collection('products').findOne({ id: base });
+        }
       }
-      if (!p && it.name && it.price) p = { id: it.id, name: it.name, price: it.price, image: it.image };
-      if (!p) continue;
-
-      const unitPrice = Number(it.price || p.price);
+      
+      const unitPrice = Number(it.price || p?.price || 0);
       const lineTotal = unitPrice * (it.qty || 1);
       subtotal += lineTotal;
-      if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
 
       resolved.push({
         id: String(it.id),
-        name: it.name || p.name,
+        name: it.name || p?.name || 'Produk',
         price: unitPrice,
         qty: it.qty || 1,
-        image: it.image || p.image || ''
+        image: it.image || p?.image || ''
       });
     }
 
@@ -125,7 +121,6 @@ async function handleCheckout(req) {
     const grandTotal = subtotal + finalShippingCost;
     const orderId = `SRC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Generate QRIS via Komerce API
     const komercePayment = await createKomerceQris(
       orderId,
       grandTotal,
@@ -147,11 +142,12 @@ async function handleCheckout(req) {
       qrisUrl: komercePayment.qrisUrl || null,
       invoiceUrl: komercePayment.invoiceUrl || null,
       refCode: affiliateValid ? refCode : null,
-      affiliateCommission: affiliateValid ? commission : 0,
       createdAt: new Date()
     };
 
-    await db.collection('orders').insertOne(orderDoc);
+    if (db) {
+      await db.collection('orders').insertOne(orderDoc);
+    }
 
     return NextResponse.json({
       success: true,
@@ -174,11 +170,11 @@ export async function GET(req, { params }) {
   if (endpoint === 'products') {
     try {
       const db = await getDb();
+      if (!db) return NextResponse.json([]);
       const products = await db.collection('products').find({}).toArray();
-      if (!products.length) return NextResponse.json(FALLBACK_PRODUCTS);
       return NextResponse.json(products);
     } catch {
-      return NextResponse.json(FALLBACK_PRODUCTS);
+      return NextResponse.json([]);
     }
   }
 
