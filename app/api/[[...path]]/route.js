@@ -167,46 +167,38 @@ export async function GET(req, { params }) {
   const path = params?.path || [];
   const endpoint = path.join('/');
 
-  if (endpoint === 'products') {
-    try {
-      const db = await getDb();
-      if (!db) return NextResponse.json([]);
-      const products = await db.collection('products').find({}).toArray();
-      return NextResponse.json(products);
-    } catch {
-      return NextResponse.json([]);
-    }
+  // Return data produk dummy untuk testing checkout & Komerce
+  if (endpoint.includes('products') || endpoint === '' || endpoint === 'soraya') {
+    return NextResponse.json([
+      {
+        id: '1',
+        title: 'Gamis Maxy Premium Soraya',
+        price: 185000,
+        category: 'gamis',
+        image: 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=600&q=80',
+        description: 'Gamis bahan rayon premium lembut dan dingin dipakai seharian.'
+      },
+      {
+        id: '2',
+        title: 'Blouse Style Korean Soraya',
+        price: 125000,
+        category: 'blouse',
+        image: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80',
+        description: 'Blouse atasan kasual elegan dengan potongan minimalis.'
+      }
+    ]);
   }
 
-  return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
-}
-
-export async function POST(req, { params }) {
-  const path = params?.path || [];
-  const endpoint = path.join('/');
-
-  // --- TAMBAHKAN BLOK INI DARI SINI ---
-  if (endpoint.includes('auth') || endpoint.includes('otp') || endpoint.includes('login')) {
+  // Jika dipanggil per ID produk (contoh: /api/soraya/products/1)
+  if (endpoint.includes('products/')) {
     return NextResponse.json({
-      success: true,
-      message: 'Kode OTP berhasil dikirim (Sandbox Dummy)',
-      otp: '123456'
+      id: '1',
+      title: 'Gamis Maxy Premium Soraya',
+      price: 185000,
+      category: 'gamis',
+      image: 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=600&q=80',
+      description: 'Gamis bahan rayon premium lembut dan dingin dipakai seharian.'
     });
-  }
-  // --- SAMPAI SINI ---
-
-  if (endpoint === 'checkout') {
-    return handleCheckout(req);
-  }
-
-  if (endpoint === 'shipping/cost' || endpoint === 'shipping/rates') {
-    try {
-      const body = await req.json();
-      const costs = await calculateKomerceShipping(body.destination, body.weight, body.courier);
-      return NextResponse.json({ success: true, costs });
-    } catch {
-      return NextResponse.json({ error: 'Gagal menghitung ongkir Komerce' }, { status: 400 });
-    }
   }
 
   return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
