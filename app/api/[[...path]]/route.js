@@ -185,6 +185,16 @@ export async function POST(req, { params }) {
   const path = params?.path || [];
   const endpoint = path.join('/');
 
+  // --- TAMBAHKAN BLOK INI DARI SINI ---
+  if (endpoint.includes('auth') || endpoint.includes('otp') || endpoint.includes('login')) {
+    return NextResponse.json({
+      success: true,
+      message: 'Kode OTP berhasil dikirim (Sandbox Dummy)',
+      otp: '123456'
+    });
+  }
+  // --- SAMPAI SINI ---
+
   if (endpoint === 'checkout') {
     return handleCheckout(req);
   }
