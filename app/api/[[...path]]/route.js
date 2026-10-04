@@ -1,19 +1,15 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
-import { v4 as uuidv4 } from 'uuid';
-import crypto from 'node:crypto';
-import { getSnapClient, getMidtransServerKey, getMidtransClientKey, describeMidtransError } from '@/lib/midtrans';
-import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
-import { FALLBACK_PRODUCTS, filterProducts } from '@/lib/catalog-fallback';
 import { getMemoryDb } from '@/lib/memory-db';
+import { FALLBACK_PRODUCTS } from '@/lib/catalog-fallback';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
 
-const FALLBACK_MOBILE_BACKEND = 'https://style-commerce-app-5.preview.emergentagent.com';
-const MOBILE_BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || FALLBACK_MOBILE_BACKEND).replace(/\/$/, '');
-const ADMIN_KEY = 'soraya-admin-2026';
+// Komerce API Keys dari Vercel Environment Variables
+const KOMERCE_SHIPPING_KEY = process.env.KOMERCE_SHIPPING_KEY;
+const KOMERCE_PAYMENT_KEY = process.env.KOMERCE_PAYMENT_KEY;
 
 let cachedClient = null;
 let cachedDb = null;
@@ -29,16 +25,63 @@ async function getDb() {
   return cachedDb;
 }
 
-function verifyAdmin(req) {
-  const authHeader = req.headers.get('authorization') || '';
-  const key = req.headers.get('x-admin-key') || (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '');
-  return key === ADMIN_KEY;
+// Helper 1: Hitung Ongkir Komerce
+async function calculateKomerceShipping(destination, weightGrams, courier) {
+  try {
+    const res = await fetch('https://api.komerce.id/v1/shipping/cost', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'key': KOMERCE_SHIPPING_KEY || ''
+      },
+      body: JSON.stringify({
+        destination: destination,
+        weight: weightGrams || 1000,
+        courier: courier || 'jne'
+      })
+    });
+    const data = await res.json();
+    return data.data || [];
+  } catch (err) {
+    console.error('Komerce Shipping Error:', err);
+    return [];
+  }
 }
 
+// Helper 2: Buat QRIS Komerce (QRISLY)
+async function createKomerceQris(orderId, amount, customerName, customerEmail) {
+  try {
+    const res = await fetch('https://api.komerce.id/v1/payment/qrisly/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': KOMERCE_PAYMENT_KEY || ''
+      },
+      body: JSON.stringify({
+        partner_order_id: orderId,
+        amount: Number(amount),
+        customer_name: customerName || 'Pelanggan Soraya',
+        customer_email: customerEmail || 'customer@soraya.co',
+        description: `Pembayaran Order #${orderId}`
+      })
+    });
+    const data = await res.json();
+    return {
+      success: true,
+      qrisUrl: data.qr_code_url || data.qris_string,
+      invoiceUrl: data.invoice_url
+    };
+  } catch (err) {
+    console.error('Komerce QRIS Error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// Handler Checkout Utama
 async function handleCheckout(req) {
   try {
     const body = await req.json();
-    const { items, customer, address, shippingMethod, shippingCost, paymentMethod, refCode } = body || {};
+    const { items, customer, address, shippingMethod, shippingCost, refCode } = body || {};
 
     if (!items || !items.length) {
       return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 });
@@ -82,6 +125,14 @@ async function handleCheckout(req) {
     const grandTotal = subtotal + finalShippingCost;
     const orderId = `SRC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // Generate QRIS via Komerce API
+    const komercePayment = await createKomerceQris(
+      orderId,
+      grandTotal,
+      customer?.name,
+      customer?.email
+    );
+
     const orderDoc = {
       orderId,
       items: resolved,
@@ -91,69 +142,24 @@ async function handleCheckout(req) {
       grandTotal,
       customer: customer || {},
       address: address || {},
-      status: 'pending',
-      paymentMethod: paymentMethod || 'midtrans',
+      status: 'pending_payment',
+      paymentMethod: 'qris_komerce',
+      qrisUrl: komercePayment.qrisUrl || null,
+      invoiceUrl: komercePayment.invoiceUrl || null,
       refCode: affiliateValid ? refCode : null,
       affiliateCommission: affiliateValid ? commission : 0,
       createdAt: new Date()
     };
-
-    let snapToken = null;
-    let redirectUrl = null;
-
-    if (paymentMethod === 'midtrans' || !paymentMethod) {
-      const snap = getSnapClient();
-      const transactionDetails = {
-        order_id: orderId,
-        gross_amount: grandTotal
-      };
-
-      const itemDetails = resolved.map((i) => ({
-        id: i.id.slice(0, 50),
-        price: i.price,
-        quantity: i.qty,
-        name: (i.name || 'Produk').slice(0, 50)
-      }));
-
-      if (finalShippingCost > 0) {
-        itemDetails.push({
-          id: 'SHIPPING',
-          price: finalShippingCost,
-          quantity: 1,
-          name: 'Ongkos Kirim'
-        });
-      }
-
-      const customerDetails = {
-        first_name: customer?.name || 'Pelanggan',
-        email: customer?.email || 'customer@example.com',
-        phone: customer?.phone || '08123456789'
-      };
-
-      try {
-        const snapResp = await snap.createTransaction({
-          transaction_details: transactionDetails,
-          item_details: itemDetails,
-          customer_details: customerDetails
-        });
-        snapToken = snapResp.token;
-        redirectUrl = snapResp.redirect_url;
-        orderDoc.snapToken = snapToken;
-        orderDoc.snapRedirectUrl = redirectUrl;
-      } catch (err) {
-        console.error('Midtrans transaction failed:', describeMidtransError(err));
-      }
-    }
 
     await db.collection('orders').insertOne(orderDoc);
 
     return NextResponse.json({
       success: true,
       orderId,
-      snapToken,
-      redirectUrl,
       grandTotal,
-      message: 'Pesanan berhasil dibuat'
+      qrisUrl: komercePayment.qrisUrl,
+      invoiceUrl: komercePayment.invoiceUrl,
+      message: 'Pesanan berhasil dibuat, silakan lakukan pembayaran QRIS'
     });
   } catch (err) {
     console.error('Checkout error:', err);
@@ -176,13 +182,6 @@ export async function GET(req, { params }) {
     }
   }
 
-  if (endpoint === 'shipping/districts') {
-    const { searchParams } = new URL(req.url);
-    const q = searchParams.get('q') || '';
-    const districts = searchFallbackDistricts(q);
-    return NextResponse.json(districts);
-  }
-
   return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
 }
 
@@ -194,13 +193,13 @@ export async function POST(req, { params }) {
     return handleCheckout(req);
   }
 
-  if (endpoint === 'shipping/rates') {
+  if (endpoint === 'shipping/cost' || endpoint === 'shipping/rates') {
     try {
       const body = await req.json();
-      const rates = getFallbackRates(body.districtId, body.weightGrams || 1000);
-      return NextResponse.json(rates);
+      const costs = await calculateKomerceShipping(body.destination, body.weight, body.courier);
+      return NextResponse.json({ success: true, costs });
     } catch {
-      return NextResponse.json({ error: 'Gagal menghitung ongkir' }, { status: 400 });
+      return NextResponse.json({ error: 'Gagal menghitung ongkir Komerce' }, { status: 400 });
     }
   }
 
