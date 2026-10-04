@@ -3,546 +3,206 @@ import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'node:crypto';
+import { getSnapClient, getMidtransServerKey, getMidtransClientKey, describeMidtransError } from '@/lib/midtrans';
 import { searchFallbackDistricts, getFallbackRates } from '@/lib/shipping-fallback';
+import { FALLBACK_PRODUCTS, filterProducts } from '@/lib/catalog-fallback';
+import { getMemoryDb } from '@/lib/memory-db';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
-const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
-const ADMIN_KEY = process.env.ADMIN_KEY || 'soraya-admin-2026';
 
-// KEY DARI DASHBOARD SANDBOX KAMU (SRY OUTLET)
-// GUNAKAN INI (Bisa di-Commit):
-const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || '';
-const MIDTRANS_CLIENT_KEY = process.env.MIDTRANS_CLIENT_KEY || '';
+const FALLBACK_MOBILE_BACKEND = 'https://style-commerce-app-5.preview.emergentagent.com';
+const MOBILE_BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || FALLBACK_MOBILE_BACKEND).replace(/\/$/, '');
+const ADMIN_KEY = 'soraya-admin-2026';
 
+let cachedClient = null;
+let cachedDb = null;
 
-const KA_KEY = process.env.KIRIMINAJA_API_KEY;
-const KA_BASE = process.env.KIRIMINAJA_IS_SANDBOX === 'true' ? 'https://tdev.kiriminaja.com' : 'https://client.kiriminaja.com';
-
-async function kaCall(path, body) {
-  if (!KA_KEY) throw new Error('KIRIMINAJA_API_KEY belum di-set di .env');
-  let r;
-  try {
-    r = await fetch(`${KA_BASE}${path}`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${KA_KEY}` },
-      body: JSON.stringify(body || {}),
-      cache: 'no-store',
-    });
-  } catch (netErr) {
-    throw new Error('Tidak bisa menghubungi KiriminAja: ' + (netErr.message || 'network error'));
-  }
-  const ct = r.headers.get('content-type') || '';
-  let data = {};
-  if (ct.includes('application/json')) {
-    try { data = await r.json(); } catch { data = {}; }
-  } else {
-    const text = await r.text().catch(() => '');
-    data = { status: false, text: text.slice(0, 200) || `HTTP ${r.status}` };
-  }
-  if (!r.ok || data.status === false) {
-    const msg = data.text || data.message || `KiriminAja HTTP ${r.status}`;
-    const err = new Error(msg);
-    err.upstream = data;
-    err.status = r.status;
-    throw err;
-  }
-  return data;
-}
-
-let client;
-let dbPromise;
 async function getDb() {
-  if (!client) {
-    client = new MongoClient(MONGO_URL);
-    dbPromise = client.connect().then(() => client.db(DB_NAME));
+  if (!MONGO_URL) return getMemoryDb();
+  if (cachedDb) return cachedDb;
+  if (!cachedClient) {
+    cachedClient = new MongoClient(MONGO_URL, { connectTimeoutMS: 8000, socketTimeoutMS: 10000 });
+    await cachedClient.connect();
   }
-  return dbPromise;
+  cachedDb = cachedClient.db(DB_NAME);
+  return cachedDb;
 }
 
-const PRODUCT_IMAGES = [
-  'https://images.unsplash.com/photo-1596703343725-7ca01bda9a45',
-  'https://images.unsplash.com/photo-1596703343516-57c8fe6282d7',
-  'https://images.unsplash.com/photo-1716170802999-d61f368407c7',
-  'https://images.unsplash.com/photo-1652953338424-612617bc4b8e',
-  'https://images.unsplash.com/photo-1652953338411-5d9ccc011c83',
-  'https://images.unsplash.com/photo-1652953338199-41a65077091e',
-  'https://images.unsplash.com/photo-1652953338408-023217fe5172',
-  'https://images.unsplash.com/photo-1601653233006-5c9fd30eab12',
-  'https://images.unsplash.com/photo-1654449753766-560ddcd19b75',
-  'https://images.unsplash.com/photo-1504051771394-dd2e66b2e08f',
-  'https://images.unsplash.com/photo-1716505681246-2f2e0f41871c',
-  'https://images.unsplash.com/photo-1648871035658-1d0d4d5d3f77',
-];
-
-const SEED_PRODUCTS = [
-  { name: 'Soraya Blouse Linen Beige', category: 'blouse', price: 185000, original: 245000, img: 3 },
-  { name: 'Atasan Katun Hitam Minimal', category: 'atasan', price: 165000, original: 199000, img: 4 },
-  { name: 'Tunik Rayon Monokrom', category: 'tunik-rayon', price: 215000, original: 265000, img: 5 },
-  { name: 'Tunik Rayon Classic White', category: 'tunik-rayon', price: 225000, original: 275000, img: 6 },
-  { name: 'Gamis Maxy Elegant Noir', category: 'gamis-maxy', price: 345000, original: 425000, img: 1 },
-  { name: 'Gamis Maxy Soft Blue', category: 'gamis-maxy', price: 325000, original: 399000, img: 0 },
-  { name: 'Midi Dress Grey Stone', category: 'midi-dress', price: 275000, original: 325000, img: 9 },
-  { name: 'Setelan Daily Essentials', category: 'setelan', price: 285000, original: 349000, img: 7 },
-  { name: 'Setelan Weekend Monochrome', category: 'setelan', price: 295000, original: 365000, img: 8 },
-  { name: 'Best Seller: Abaya Noir', category: 'best-seller', price: 395000, original: 495000, img: 10 },
-  { name: 'Best Seller: Abaya Blanche', category: 'best-seller', price: 385000, original: 480000, img: 11 },
-  { name: 'Pyajamas Linen Set', category: 'pyajamas', price: 195000, original: 250000, img: 2 },
-  { name: 'Pyajamas Soft Cotton', category: 'pyajamas', price: 185000, original: 229000, img: 4 },
-  { name: 'Promo Blouse Bundle', category: 'promo', price: 149000, original: 299000, img: 5 },
-  { name: 'Promo Tunik Flash Sale', category: 'promo', price: 175000, original: 285000, img: 6 },
-  { name: 'Reseller Pack 3 Pcs Mix', category: 'reseller', price: 495000, original: 695000, img: 8 },
-  { name: 'Reseller Pack 5 Pcs Mix', category: 'reseller', price: 795000, original: 1125000, img: 7 },
-  { name: 'Atasan Linen Minimal II', category: 'atasan', price: 175000, original: 219000, img: 3 },
-  { name: 'Blouse Satin Noir', category: 'blouse', price: 225000, original: 279000, img: 4 },
-  { name: 'Midi Dress Noir Classic', category: 'midi-dress', price: 285000, original: 349000, img: 1 },
-];
-
-async function ensureSeed(db) {
-  const col = db.collection('products');
-  const count = await col.countDocuments();
-  if (count === 0) {
-    const docs = SEED_PRODUCTS.map((p) => ({
-      id: uuidv4(),
-      name: p.name,
-      category: p.category,
-      price: p.price,
-      originalPrice: p.original,
-      image: PRODUCT_IMAGES[p.img],
-      description: 'Modest wear premium dari Soraya.Co. Dibuat dari bahan pilihan untuk kenyamanan dan tampilan elegan.',
-      commissionPct: 10,
-      stock: 50,
-      createdAt: new Date().toISOString(),
-    }));
-    await col.insertMany(docs);
-  }
+function verifyAdmin(req) {
+  const authHeader = req.headers.get('authorization') || '';
+  const key = req.headers.get('x-admin-key') || (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '');
+  return key === ADMIN_KEY;
 }
 
-function json(data, status = 200) { return NextResponse.json(data, { status }); }
-function notFound() { return json({ error: 'Not found' }, 404); }
-
-function genAffiliateCode(name) {
-  const base = (name || 'AFF').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'AFF';
-  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `${base}${suffix}`;
-}
-
-function absolutizeImage(img) {
-  if (!img) return null;
-  if (/^https?:\/\//i.test(img)) return img;
-  if (!MOBILE_BACKEND) return img;
-  return MOBILE_BACKEND.replace(/\/$/, '') + (img.startsWith('/') ? img : '/' + img);
-}
-
-function normalizeMobileProduct(p, idx) {
-  const rawImg = p.image || p.imageUrl || p.photo || p.thumbnail || (p.variants && p.variants[0] && p.variants[0].image) || PRODUCT_IMAGES[idx % PRODUCT_IMAGES.length];
-  const img = absolutizeImage(rawImg);
-  const originalPrice = p.originalPrice || p.original_price || p.compareAtPrice;
-  let category = 'all';
-  if (Array.isArray(p.categories) && p.categories.length) category = p.categories[0];
-  else if (p.category) category = p.category;
-  else if (p.categorySlug) category = p.categorySlug;
-  const price = Number(p.price || 0);
-  const variants = Array.isArray(p.variants) ? p.variants.map((v) => ({ ...v, image: absolutizeImage(v.image) })) : [];
-  return {
-    id: String(p.id || p._id || p.sku || uuidv4()),
-    name: p.name || p.title || 'Produk',
-    category,
-    categories: Array.isArray(p.categories) ? p.categories : [category],
-    price,
-    originalPrice: originalPrice ? Number(originalPrice) : null,
-    image: img,
-    description: p.description || p.desc || 'Modest wear premium Soraya.Co.',
-    commissionPct: p.commissionPct || p.commission_pct || 10,
-    stock: p.stock != null ? Number(p.stock) : 100,
-    variants,
-    sizes: p.sizes || [],
-    source: 'mobile',
-  };
-}
-
-async function fetchMobileProducts() {
-  if (!MOBILE_BACKEND) return null;
-  const paths = ['/api/products', '/api/catalog/products', '/products.json', '/api/v1/products'];
-  for (const p of paths) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(MOBILE_BACKEND + p, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
-      clearTimeout(t);
-      if (!r.ok) continue;
-      const ct = r.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) continue;
-      const data = await r.json();
-      const list = Array.isArray(data) ? data : (data.items || data.products || data.data || []);
-      if (list.length) return list.map(normalizeMobileProduct);
-    } catch {}
-  }
-  return null;
-}
-
-async function createOrder(db, body) {
-  const { items, customer, paymentMethod, ref, affiliate_code, shipping } = body;
-  const refCode = ref || affiliate_code || null;
-  if (!items || !items.length) return { error: 'Keranjang kosong', status: 400 };
-  let subtotal = 0;
-  let commission = 0;
-  let affiliateValid = false;
-  if (refCode) {
-    const aff = await db.collection('affiliates').findOne({ code: refCode });
-    if (aff) affiliateValid = true;
-  }
-  const resolved = [];
-  for (const it of items) {
-    let p = await db.collection('products').findOne({ id: it.id });
-    if (!p && typeof it.id === 'string' && it.id.includes('::')) {
-      const base = it.id.split('::')[0];
-      p = await db.collection('products').findOne({ id: base });
-    }
-    if (!p && it.name && it.price) p = { id: it.id, name: it.name, price: it.price, image: it.image, commissionPct: 10 };
-    if (!p) continue;
-    const unitPrice = Number(it.price || p.price);
-    const lineTotal = unitPrice * (it.qty || 1);
-    subtotal += lineTotal;
-    if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
-    resolved.push({ id: String(it.id), name: it.name || p.name, price: unitPrice, qty: it.qty || 1, image: it.image || p.image });
-  }
-  const shippingCost = shipping?.price ? Number(shipping.price) : 0;
-  const total = subtotal + shippingCost;
-  const order = {
-    id: uuidv4(),
-    orderNumber: 'SOR-' + Date.now().toString(36).toUpperCase(),
-    items: resolved,
-    subtotal,
-    shipping: shipping || null,
-    shippingCost,
-    total,
-    commission: affiliateValid ? commission : 0,
-    ref: affiliateValid ? refCode : null,
-    customer: customer || {},
-    paymentMethod: paymentMethod || null,
-    paymentStatus: 'pending',
-    status: 'pending_validation',
-    createdAt: new Date().toISOString(),
-  };
-  await db.collection('orders').insertOne(order);
-  return { order: { ...order, _id: undefined } };
-}
-
-function genOtp() { return String(Math.floor(100000 + Math.random() * 900000)); }
-function genToken() { return uuidv4().replace(/-/g, ''); }
-
-async function handler(request, ctx) {
-  const method = request.method;
-  const url = new URL(request.url);
-  const adminKey = request.headers.get('x-admin-key');
-  const isAdmin = adminKey === ADMIN_KEY;
-  let path = '';
-
+async function handleCheckout(req) {
   try {
-    const params = await ctx.params;
-    path = (params?.path || []).join('/');
+    const body = await req.json();
+    const { items, customer, address, shippingMethod, shippingCost, paymentMethod, refCode } = body || {};
+
+    if (!items || !items.length) {
+      return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 });
+    }
+
     const db = await getDb();
-    await ensureSeed(db);
+    let subtotal = 0;
+    let commission = 0;
+    let affiliateValid = false;
 
-    // ---------------- PRODUCTS ----------------
-    if (path === 'products' && method === 'GET') {
-      const category = url.searchParams.get('category');
-      const search = (url.searchParams.get('search') || '').trim();
+    if (refCode) {
+      const aff = await db.collection('affiliates').findOne({ code: refCode });
+      if (aff) affiliateValid = true;
+    }
 
-      let items = null;
-      const mobile = await fetchMobileProducts();
-      if (mobile && mobile.length) items = mobile;
-
-      if (!items) {
-        const q = {};
-        if (category && category !== 'all') q.category = category;
-        if (search) q.name = { $regex: search,$options: 'i' };
-        items = await db.collection('products').find(q, { projection: { _id: 0 } }).toArray();
-        return json({ items, source: 'local' });
+    const resolved = [];
+    for (const it of items) {
+      let p = await db.collection('products').findOne({ id: it.id });
+      if (!p && typeof it.id === 'string' && it.id.includes(':::')) {
+        const base = it.id.split(':::')[0];
+        p = await db.collection('products').findOne({ id: base });
       }
+      if (!p && it.name && it.price) p = { id: it.id, name: it.name, price: it.price, image: it.image };
+      if (!p) continue;
 
-      if (category && category !== 'all') items = items.filter((p) => (p.categories || [p.category]).includes(category));
-      if (search) items = items.filter((p) => (p.name || '').toLowerCase().includes(search.toLowerCase()));
-      return json({ items, source: 'mobile' });
-    }
-    if (path.startsWith('products/') && method === 'GET') {
-      const id = path.split('/')[1];
-      const mobile = await fetchMobileProducts();
-      if (mobile) {
-        const found = mobile.find((p) => String(p.id) === String(id));
-        if (found) return json(found);
-      }
-      const item = await db.collection('products').findOne({ id }, { projection: { _id: 0 } });
-      if (!item) return notFound();
-      return json(item);
-    }
+      const unitPrice = Number(it.price || p.price);
+      const lineTotal = unitPrice * (it.qty || 1);
+      subtotal += lineTotal;
+      if (affiliateValid) commission += Math.round((lineTotal * (p.commissionPct || 10)) / 100);
 
-    // ---------------- AUTH ----------------
-    if (path === 'auth/login' && method === 'POST') {
-      const body = await request.json();
-      const identifier = (body.identifier || '').trim();
-      const mode = body.mode || 'phone';
-      if (!identifier) return json({ error: 'Identifier wajib' }, 400);
-      const otp = genOtp();
-      await db.collection('otps').insertOne({ identifier, otp, mode, createdAt: new Date().toISOString(), used: false });
-      return json({ ok: true, devOtp: otp, message: 'OTP generated (dev mode)' });
-    }
-
-    if (path === 'auth/verify-otp' && method === 'POST') {
-      const body = await request.json();
-      const identifier = (body.identifier || '').trim();
-      const otp = (body.otp || '').trim();
-      if (!identifier || !otp) return json({ error: 'Field wajib' }, 400);
-      const rec = await db.collection('otps').find({ identifier, used: false }).sort({ createdAt: -1 }).limit(1).toArray();
-      if (!rec.length || rec[0].otp !== otp) return json({ error: 'Kode OTP salah' }, 400);
-      await db.collection('otps').updateOne({ _id: rec[0]._id }, { $set: { used: true } });
-      let user = await db.collection('users').findOne({ identifier });
-      if (!user) {
-        user = { id: uuidv4(), identifier, mode: body.mode || 'phone', name: 'Owner Soraya', role: 'admin', createdAt: new Date().toISOString() };
-        await db.collection('users').insertOne(user);
-      } else {
-        await db.collection('users').updateOne({ id: user.id }, { $set: { role: 'admin' } });
-        user.role = 'admin';
-      }
-      const token = genToken();
-      await db.collection('sessions').insertOne({ token, userId: user.id, createdAt: new Date().toISOString() });
-      const aff = await db.collection('affiliates').findOne({ $or: [{ email: identifier }, { phone: identifier }] });
-      return json({ token, user: { id: user.id, identifier: user.identifier, name: user.name || 'Owner', role: 'admin', affiliateCode: aff?.code || null } });
-    }
-
-    if (path === 'auth/me' && method === 'GET') {
-      const auth = request.headers.get('authorization') || '';
-      const token = auth.replace(/^Bearer\s+/i, '');
-      if (!token) return json({ error: 'No token' }, 401);
-      const sess = await db.collection('sessions').findOne({ token });
-      if (!sess) return json({ error: 'Invalid token' }, 401);
-      const user = await db.collection('users').findOne({ id: sess.userId }, { projection: { _id: 0 } });
-      if (!user) return json({ error: 'User not found' }, 404);
-      const aff = await db.collection('affiliates').findOne({ $or: [{ email: user.identifier }, { phone: user.identifier }] });
-      return json({ user: { ...user, role: 'admin', affiliateCode: aff?.code || null } });
-    }
-
-    // ---------------- AFFILIATE ----------------
-    if (path === 'affiliate/register' && method === 'POST') {
-      const body = await request.json();
-      const required = ['fullName', 'email', 'phone'];
-      for (const f of required) if (!body[f]) return json({ error: `Field ${f} wajib diisi` }, 400);
-      const existing = await db.collection('affiliates').findOne({ email: body.email });
-      if (existing) return json({ error: 'Email sudah terdaftar', code: existing.code }, 409);
-      const code = genAffiliateCode(body.fullName);
-      const doc = { id: uuidv4(), code, fullName: body.fullName, email: body.email, phone: body.phone, socialLinks: body.socialLinks || '', payout: body.payout || {}, status: 'pending', createdAt: new Date().toISOString() };
-      await db.collection('affiliates').insertOne(doc);
-      return json({ affiliate: { ...doc, _id: undefined } });
-    }
-
-    if (path.match(/^affiliate\/[^/]+\/activate$/) && method === 'POST') {
-      const code = path.split('/')[1];
-      await db.collection('affiliates').updateOne({ code }, { $set: { status: 'active' } });
-      return json({ ok: true });
-    }
-
-    if (path.match(/^affiliate\/[^/]+$/) && method === 'GET') {
-      const code = path.split('/')[1];
-      const aff = await db.collection('affiliates').findOne({ code }, { projection: { _id: 0 } });
-      if (!aff) return notFound();
-      const [clicks, orders, payouts] = await Promise.all([
-        db.collection('clicks').countDocuments({ ref: code }),
-        db.collection('orders').find({ ref: code }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray(),
-        db.collection('payouts').find({ affiliateCode: code }, { projection: { _id: 0 } }).toArray(),
-      ]);
-      const approvedCommission = orders.filter((o) => o.status === 'approved').reduce((s, o) => s + (o.commission || 0), 0);
-      const pendingCommission = orders.filter((o) => o.status === 'pending_validation').reduce((s, o) => s + (o.commission || 0), 0);
-      const paidOut = payouts.filter((p) => p.status === 'Paid').reduce((s, p) => s + p.amount, 0);
-      const pendingPayouts = payouts.filter((p) => p.status === 'Pending').reduce((s, p) => s + p.amount, 0);
-      const available = Math.max(0, approvedCommission - paidOut - pendingPayouts);
-      const totalCommission = approvedCommission + pendingCommission;
-      return json({
-        affiliate: aff,
-        stats: { clicks, conversions: orders.length, approvedConversions: orders.filter((o) => o.status === 'approved').length, totalCommission, available, pending: pendingCommission, pendingPayouts, paidOut },
-        orders, payouts,
+      resolved.push({
+        id: String(it.id),
+        name: it.name || p.name,
+        price: unitPrice,
+        qty: it.qty || 1,
+        image: it.image || p.image || ''
       });
     }
 
-    if (path === 'affiliate/track-click' && method === 'POST') {
-      const body = await request.json();
-      const { ref, productId } = body;
-      if (!ref) return json({ ok: false });
-      await db.collection('clicks').insertOne({ id: uuidv4(), ref, productId: productId || null, createdAt: new Date().toISOString() });
-      return json({ ok: true });
-    }
+    const finalShippingCost = Number(shippingCost || 0);
+    const grandTotal = subtotal + finalShippingCost;
+    const orderId = `SRC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // ---------------- ORDERS ----------------
-    if ((path === 'orders' || path === 'checkout/session') && method === 'POST') {
-      const body = await request.json();
-      const result = await createOrder(db, body);
-      if (result.error) return json({ error: result.error }, result.status || 400);
-      return json(result);
-    }
+    const orderDoc = {
+      orderId,
+      items: resolved,
+      subtotal,
+      shippingCost: finalShippingCost,
+      shippingMethod: shippingMethod || 'standard',
+      grandTotal,
+      customer: customer || {},
+      address: address || {},
+      status: 'pending',
+      paymentMethod: paymentMethod || 'midtrans',
+      refCode: affiliateValid ? refCode : null,
+      affiliateCommission: affiliateValid ? commission : 0,
+      createdAt: new Date()
+    };
 
-    // ---------------- PAYOUTS ----------------
-    if (path === 'payouts' && method === 'POST') {
-      const body = await request.json();
-      const { affiliateCode, amount, method: payoutMethod, account } = body;
-      if (!affiliateCode || !amount) return json({ error: 'Field wajib diisi' }, 400);
-      const doc = { id: uuidv4(), affiliateCode, amount: Number(amount), method: payoutMethod || 'BCA', account: account || '', status: 'Pending', createdAt: new Date().toISOString() };
-      await db.collection('payouts').insertOne(doc);
-      return json({ payout: { ...doc, _id: undefined } });
-    }
+    let snapToken = null;
+    let redirectUrl = null;
 
-    // ---------------- ADMIN ----------------
-    if (path === 'admin/affiliates' && method === 'GET') {
-      const items = await db.collection('affiliates').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
-      return json({ items });
-    }
-    if (path === 'admin/orders' && method === 'GET') {
-      const items = await db.collection('orders').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
-      return json({ items });
-    }
+    if (paymentMethod === 'midtrans' || !paymentMethod) {
+      const snap = getSnapClient();
+      const transactionDetails = {
+        order_id: orderId,
+        gross_amount: grandTotal
+      };
 
-    // ---------------- SHIPPING ----------------
-    if ((path === 'shipping/destinations' || path === 'shipping/search-location') && method === 'GET') {
-      const search = (url.searchParams.get('search') || url.searchParams.get('q') || '').trim();
-      if (search.length < 2) return json({ success: true, items: [], message: 'Ketik minimal 2 huruf' });
-      try {
-        const data = await kaCall('/api/mitra/v2/get_address_by_name', { search });
-        return json({ success: true, items: data.data || [], source: 'kiriminaja' });
-      } catch (e) {
-        const items = searchFallbackDistricts(search);
-        return json({ success: true, items, source: 'fallback' });
-      }
-    }
+      const itemDetails = resolved.map((i) => ({
+        id: i.id.slice(0, 50),
+        price: i.price,
+        quantity: i.qty,
+        name: (i.name || 'Produk').slice(0, 50)
+      }));
 
-    if ((path === 'shipping/rates' || path === 'shipping/calculate-cost') && method === 'POST') {
-      let body = {};
-      try { body = await request.json(); } catch { body = {}; }
-      const destinationRaw = body.destinationDistrictId || body.destination;
-      const weight = Math.max(100, Number(body.weight || 1000));
-      const itemValue = Number(body.itemValue || body.item_value || 0);
-
-      if (typeof destinationRaw === 'string' && destinationRaw.startsWith('LOCAL-')) {
-        const options = getFallbackRates(destinationRaw, itemValue);
-        return json({ success: true, options, source: 'fallback' });
-      }
-
-      const destination = Number(destinationRaw);
-      const origin = Number(body.originDistrictId || body.origin || process.env.KIRIMINAJA_ORIGIN_DISTRICT_ID || 0);
-      try {
-        const data = await kaCall('/api/mitra/v6.1/shipping_price', {
-          origin, destination, weight, length: 1, width: 1, height: 1, item_value: itemValue, insurance: 0, courier: [],
+      if (finalShippingCost > 0) {
+        itemDetails.push({
+          id: 'SHIPPING',
+          price: finalShippingCost,
+          quantity: 1,
+          name: 'Ongkos Kirim'
         });
-        const options = (data.results || data.data || []).map((x) => ({
-          service: x.service, service_name: x.service_name || x.service, price: Number(x.cost || x.price || 0),
-        })).filter((x) => x.price > 0);
-        return json({ success: true, options, source: 'kiriminaja' });
-      } catch (e) {
-        return json({ success: false, options: [], message: e.message }, 200);
       }
-    }
 
-    // ---------------- PAYMENT SNAP (PAKSA KE SANDBOX MIDTRANS) ----------------
-    if (path === 'payment/snap' && method === 'POST') {
-      const body = await request.json();
-      const order = await db.collection('orders').findOne({ id: body.orderId });
-      if (!order) return notFound();
-
-      const customerName = (order.customer?.name || 'Soraya Customer').split(' ');
-      
-      // Basic Auth Midtrans (ServerKey + titik dua)
-      const cleanServerKey = MIDTRANS_SERVER_KEY.trim();
-      const authHeader = `Basic ${Buffer.from(`${cleanServerKey}:`).toString('base64')}`;
-      
-      // DIPAKSA MEMANGGIL URL SANDBOX
-      const snapUrl = 'https://app.sandbox.midtrans.com/snap/v1/transactions';
-
-      const payload = {
-        transaction_details: { 
-          order_id: order.orderNumber, 
-          gross_amount: Math.round(order.total) 
-        },
-        item_details: [
-          ...order.items.map((it) => ({ 
-            id: String(it.id).slice(0, 50), 
-            name: String(it.name).slice(0, 50), 
-            price: Math.round(it.price), 
-            quantity: it.qty 
-          })),
-          ...(order.shipping ? [{ 
-            id: 'SHIP', 
-            name: `Ongkir ${order.shipping.service_name || order.shipping.service}`.slice(0, 50), 
-            price: Math.round(order.shipping.price || 0), 
-            quantity: 1 
-          }] : []),
-        ],
-        customer_details: {
-          first_name: customerName[0] || 'Soraya',
-          last_name: customerName.slice(1).join(' ') || 'Customer',
-          email: order.customer?.email || 'buyer@soraya.co',
-          phone: order.customer?.phone || '08000000000',
-        },
-        enabled_payments: ['other_qris', 'bank_transfer', 'gopay', 'ovo', 'shopeepay', 'dana'],
+      const customerDetails = {
+        first_name: customer?.name || 'Pelanggan',
+        email: customer?.email || 'customer@example.com',
+        phone: customer?.phone || '08123456789'
       };
 
       try {
-        const response = await fetch(snapUrl, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Authorization': authHeader
-          },
-          body: JSON.stringify(payload)
+        const snapResp = await snap.createTransaction({
+          transaction_details: transactionDetails,
+          item_details: itemDetails,
+          customer_details: customerDetails
         });
-
-        const tx = await response.json();
-
-        if (!response.ok) {
-          console.error('Midtrans Snap Error:', tx);
-          return json({ error: tx.error_messages?.[0] || 'Midtrans Error', upstream: tx }, response.status);
-        }
-
-        await db.collection('orders').updateOne(
-          { id: order.id },
-          { $set: { midtransToken: tx.token, midtransRedirect: tx.redirect_url, paymentStatus: 'pending', updatedAt: new Date().toISOString() } }
-        );
-
-        return json({ token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: MIDTRANS_CLIENT_KEY });
-      } catch (e) {
-        console.error('Midtrans Exception:', e.message);
-        return json({ error: 'Midtrans: ' + e.message }, 502);
+        snapToken = snapResp.token;
+        redirectUrl = snapResp.redirect_url;
+        orderDoc.snapToken = snapToken;
+        orderDoc.snapRedirectUrl = redirectUrl;
+      } catch (err) {
+        console.error('Midtrans transaction failed:', describeMidtransError(err));
       }
     }
 
-    if (path === 'payment/notification' && method === 'POST') {
-      const n = await request.json();
-      if (!MIDTRANS_SERVER_KEY) return json({ error: 'no key' }, 500);
-      const expected = crypto.createHash('sha512')
-        .update(`${n.order_id}${n.status_code}${n.gross_amount}${MIDTRANS_SERVER_KEY.trim()}`)
-        .digest('hex');
-      if (expected !== n.signature_key) return json({ error: 'invalid signature' }, 401);
-      let status = 'pending';
-      if (n.transaction_status === 'settlement') status = 'paid';
-      else if (n.transaction_status === 'capture') status = n.fraud_status === 'accept' ? 'paid' : 'pending';
-      else if (n.transaction_status === 'cancel' || n.transaction_status === 'deny' || n.transaction_status === 'expire' || n.transaction_status === 'failure') status = 'failed';
-      const order = await db.collection('orders').findOne({ orderNumber: n.order_id });
-      if (!order) return json({ ok: false }, 404);
-      const newOrderStatus = status === 'paid' ? 'approved' : (status === 'failed' ? 'cancelled' : order.status);
-      const patch = { paymentStatus: order.paymentStatus === 'paid' ? 'paid' : status, transactionStatus: n.transaction_status, paymentType: n.payment_type || null, midtransTransactionId: n.transaction_id || null, status: newOrderStatus, updatedAt: new Date().toISOString() };
-      await db.collection('orders').updateOne({ orderNumber: n.order_id }, { $set: patch });
-      return json({ received: true });
-    }
+    await db.collection('orders').insertOne(orderDoc);
 
-    // ---------------- HEALTH CHECK ----------------
-    if (path === '' && method === 'GET') return json({ ok: true, service: 'soraya.co', mobileBackend: MOBILE_BACKEND || null });
-
-    return json({ success: false, message: 'Not found', path }, 404);
+    return NextResponse.json({
+      success: true,
+      orderId,
+      snapToken,
+      redirectUrl,
+      grandTotal,
+      message: 'Pesanan berhasil dibuat'
+    });
   } catch (err) {
-    console.error('API fatal error:', err);
-    return json({ success: false, message: err?.message || 'Server error' }, 500);
+    console.error('Checkout error:', err);
+    return NextResponse.json({ error: 'Gagal memproses checkout', details: err.message }, { status: 500 });
   }
 }
 
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export async function GET(req, { params }) {
+  const path = params?.path || [];
+  const endpoint = path.join('/');
+
+  if (endpoint === 'products') {
+    try {
+      const db = await getDb();
+      const products = await db.collection('products').find({}).toArray();
+      if (!products.length) return NextResponse.json(FALLBACK_PRODUCTS);
+      return NextResponse.json(products);
+    } catch {
+      return NextResponse.json(FALLBACK_PRODUCTS);
+    }
+  }
+
+  if (endpoint === 'shipping/districts') {
+    const { searchParams } = new URL(req.url);
+    const q = searchParams.get('q') || '';
+    const districts = searchFallbackDistricts(q);
+    return NextResponse.json(districts);
+  }
+
+  return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
+}
+
+export async function POST(req, { params }) {
+  const path = params?.path || [];
+  const endpoint = path.join('/');
+
+  if (endpoint === 'checkout') {
+    return handleCheckout(req);
+  }
+
+  if (endpoint === 'shipping/rates') {
+    try {
+      const body = await req.json();
+      const rates = getFallbackRates(body.districtId, body.weightGrams || 1000);
+      return NextResponse.json(rates);
+    } catch {
+      return NextResponse.json({ error: 'Gagal menghitung ongkir' }, { status: 400 });
+    }
+  }
+
+  return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
+}
