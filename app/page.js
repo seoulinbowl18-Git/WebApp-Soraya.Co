@@ -11,7 +11,9 @@ import ReferralTracker from '@/components/soraya/ReferralTracker';
 import { getRefCookie } from '@/lib/soraya';
 import Link from 'next/link';
 
- function HomePageContent() {⁠
+function HomePageContent() {
+
+
 
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('all');
