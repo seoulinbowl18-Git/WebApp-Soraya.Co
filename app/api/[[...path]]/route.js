@@ -9,8 +9,12 @@ const DB_NAME = process.env.DB_NAME || 'soraya_co';
 const MOBILE_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'soraya-admin-2026';
 
+// KEY DARI DASHBOARD SANDBOX KAMU (SRY OUTLET)
+// GUNAKAN INI (Bisa di-Commit):
 const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || '';
-const MIDTRANS_IS_PRODUCTION = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+const MIDTRANS_CLIENT_KEY = process.env.MIDTRANS_CLIENT_KEY || '';
+
+
 const KA_KEY = process.env.KIRIMINAJA_API_KEY;
 const KA_BASE = process.env.KIRIMINAJA_IS_SANDBOX === 'true' ? 'https://tdev.kiriminaja.com' : 'https://client.kiriminaja.com';
 
@@ -273,7 +277,7 @@ async function handler(request, ctx) {
       return json(item);
     }
 
-    // ---------------- AUTH (Auto Admin Support) ----------------
+    // ---------------- AUTH ----------------
     if (path === 'auth/login' && method === 'POST') {
       const body = await request.json();
       const identifier = (body.identifier || '').trim();
@@ -297,7 +301,6 @@ async function handler(request, ctx) {
         user = { id: uuidv4(), identifier, mode: body.mode || 'phone', name: 'Owner Soraya', role: 'admin', createdAt: new Date().toISOString() };
         await db.collection('users').insertOne(user);
       } else {
-        // Escalation ke admin
         await db.collection('users').updateOne({ id: user.id }, { $set: { role: 'admin' } });
         user.role = 'admin';
       }
@@ -319,7 +322,7 @@ async function handler(request, ctx) {
       return json({ user: { ...user, role: 'admin', affiliateCode: aff?.code || null } });
     }
 
-    // ---------------- AFFILIATE REGISTER & STATS ----------------
+    // ---------------- AFFILIATE ----------------
     if (path === 'affiliate/register' && method === 'POST') {
       const body = await request.json();
       const required = ['fullName', 'email', 'phone'];
@@ -368,7 +371,7 @@ async function handler(request, ctx) {
       return json({ ok: true });
     }
 
-    // ---------------- ORDERS / CHECKOUT ----------------
+    // ---------------- ORDERS ----------------
     if ((path === 'orders' || path === 'checkout/session') && method === 'POST') {
       const body = await request.json();
       const result = await createOrder(db, body);
@@ -386,7 +389,7 @@ async function handler(request, ctx) {
       return json({ payout: { ...doc, _id: undefined } });
     }
 
-    // ---------------- ADMIN ROUTES ----------------
+    // ---------------- ADMIN ----------------
     if (path === 'admin/affiliates' && method === 'GET') {
       const items = await db.collection('affiliates').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
       return json({ items });
@@ -396,7 +399,7 @@ async function handler(request, ctx) {
       return json({ items });
     }
 
-    // ---------------- SHIPPING (KiriminAja + Fallback) ----------------
+    // ---------------- SHIPPING ----------------
     if ((path === 'shipping/destinations' || path === 'shipping/search-location') && method === 'GET') {
       const search = (url.searchParams.get('search') || url.searchParams.get('q') || '').trim();
       if (search.length < 2) return json({ success: true, items: [], message: 'Ketik minimal 2 huruf' });
@@ -436,7 +439,7 @@ async function handler(request, ctx) {
       }
     }
 
-    // ---------------- PAYMENT FIX (Native Fetch Basic Auth - No 401 Error) ----------------
+    // ---------------- PAYMENT SNAP (PAKSA KE SANDBOX MIDTRANS) ----------------
     if (path === 'payment/snap' && method === 'POST') {
       const body = await request.json();
       const order = await db.collection('orders').findOne({ id: body.orderId });
@@ -444,17 +447,31 @@ async function handler(request, ctx) {
 
       const customerName = (order.customer?.name || 'Soraya Customer').split(' ');
       
-      // FIX 401: Penambahan Tanda Titik Dua ':' Sebelum Di-encode ke Base64
-      const authHeader = `Basic ${Buffer.from(`${MIDTRANS_SERVER_KEY}:`).toString('base64')}`;
-      const snapUrl = MIDTRANS_IS_PRODUCTION 
-        ? 'https://app.midtrans.com/snap/v1/transactions' 
-        : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+      // Basic Auth Midtrans (ServerKey + titik dua)
+      const cleanServerKey = MIDTRANS_SERVER_KEY.trim();
+      const authHeader = `Basic ${Buffer.from(`${cleanServerKey}:`).toString('base64')}`;
+      
+      // DIPAKSA MEMANGGIL URL SANDBOX
+      const snapUrl = 'https://app.sandbox.midtrans.com/snap/v1/transactions';
 
       const payload = {
-        transaction_details: { order_id: order.orderNumber, gross_amount: Math.round(order.total) },
+        transaction_details: { 
+          order_id: order.orderNumber, 
+          gross_amount: Math.round(order.total) 
+        },
         item_details: [
-          ...order.items.map((it) => ({ id: String(it.id).slice(0, 50), name: String(it.name).slice(0, 50), price: Math.round(it.price), quantity: it.qty })),
-          ...(order.shipping ? [{ id: 'SHIP', name: `Ongkir ${order.shipping.service_name || order.shipping.service}`.slice(0, 50), price: Math.round(order.shipping.price || 0), quantity: 1 }] : []),
+          ...order.items.map((it) => ({ 
+            id: String(it.id).slice(0, 50), 
+            name: String(it.name).slice(0, 50), 
+            price: Math.round(it.price), 
+            quantity: it.qty 
+          })),
+          ...(order.shipping ? [{ 
+            id: 'SHIP', 
+            name: `Ongkir ${order.shipping.service_name || order.shipping.service}`.slice(0, 50), 
+            price: Math.round(order.shipping.price || 0), 
+            quantity: 1 
+          }] : []),
         ],
         customer_details: {
           first_name: customerName[0] || 'Soraya',
@@ -480,7 +497,7 @@ async function handler(request, ctx) {
 
         if (!response.ok) {
           console.error('Midtrans Snap Error:', tx);
-          return json({ error: tx.error_messages?.[0] || 'Gagal terhubung ke Midtrans (401)', upstream: tx }, response.status);
+          return json({ error: tx.error_messages?.[0] || 'Midtrans Error', upstream: tx }, response.status);
         }
 
         await db.collection('orders').updateOne(
@@ -488,7 +505,7 @@ async function handler(request, ctx) {
           { $set: { midtransToken: tx.token, midtransRedirect: tx.redirect_url, paymentStatus: 'pending', updatedAt: new Date().toISOString() } }
         );
 
-        return json({ token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: process.env.MIDTRANS_CLIENT_KEY });
+        return json({ token: tx.token, redirect_url: tx.redirect_url, orderNumber: order.orderNumber, clientKey: MIDTRANS_CLIENT_KEY });
       } catch (e) {
         console.error('Midtrans Exception:', e.message);
         return json({ error: 'Midtrans: ' + e.message }, 502);
@@ -499,7 +516,7 @@ async function handler(request, ctx) {
       const n = await request.json();
       if (!MIDTRANS_SERVER_KEY) return json({ error: 'no key' }, 500);
       const expected = crypto.createHash('sha512')
-        .update(`${n.order_id}${n.status_code}${n.gross_amount}${MIDTRANS_SERVER_KEY}`)
+        .update(`${n.order_id}${n.status_code}${n.gross_amount}${MIDTRANS_SERVER_KEY.trim()}`)
         .digest('hex');
       if (expected !== n.signature_key) return json({ error: 'invalid signature' }, 401);
       let status = 'pending';
