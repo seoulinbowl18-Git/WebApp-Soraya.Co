@@ -54,7 +54,7 @@ function HomePageContent() {
       <section className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
         <div className="flex items-end justify-between mb-5">
           <div>
-            <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight font-geist">Modest. Minimal. Soraya.</h1>
+            <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight font-geist">Outfit. Daily. Nyaman.</h1>
             <p className="text-sm text-[#8A8A8A] mt-1">Koleksi baru setiap minggu. Gratis ongkir ke seluruh Indonesia.</p>
           </div>
           <Link href="/affiliate" className="hidden md:inline-block text-sm font-semibold border border-black px-4 h-10 leading-10">
