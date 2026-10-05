@@ -200,157 +200,15 @@ async function getDb() {
   }
 }
 
-// 1. Hitung Ongkir Komerce
-async function calculateKomerceShipping(destination, weightGrams, courier) {
-  try {
-    const res = await fetch('https://api.komerce.id/v1/shipping/cost', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'key': KOMERCE_SHIPPING_KEY
-      },
-      body: JSON.stringify({
-        destination: destination,
-        weight: weightGrams || 1000,
-        courier: courier || 'jne'
-      })
-    });
-    const data = await res.json();
-    return data.data || [];
-  } catch (err) {
-    console.error('Komerce Shipping Error:', err);
-    return [];
-  }
-}
-
-// 2. Generate QRIS Komerce
-async function createKomerceQris(orderId, amount, customerName, customerEmail) {
-  try {
-    const res = await fetch('https://api.komerce.id/v1/payment/qrisly/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': KOMERCE_PAYMENT_KEY
-      },
-      body: JSON.stringify({
-        partner_order_id: orderId,
-        amount: Number(amount),
-        customer_name: customerName || 'Pelanggan Soraya',
-        customer_email: customerEmail || 'customer@soraya.co',
-        description: `Pembayaran Order #${orderId}`
-      })
-    });
-    const data = await res.json();
-    return {
-      success: true,
-      qrisUrl: data.qr_code_url || data.qris_string || 'https://via.placeholder.com/300x300.png?text=QRIS+Dummy+Sandbox',
-      invoiceUrl: data.invoice_url || '#'
-    };
-  } catch (err) {
-    console.error('Komerce QRIS Error:', err);
-    return {
-      success: true,
-      qrisUrl: 'https://via.placeholder.com/300x300.png?text=QRIS+Dummy+Sandbox',
-      invoiceUrl: '#'
-    };
-  }
-}
-
-async function handleCheckout(req) {
-  try {
-    const body = await req.json();
-    const { items, customer, address, shippingMethod, shippingCost, refCode } = body || {};
-
-    if (!items || !items.length) {
-      return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 });
-    }
-
-    const db = await getDb();
-    let subtotal = 0;
-    let affiliateValid = false;
-
-    if (db && refCode) {
-      const aff = await db.collection('affiliates').findOne({ code: refCode });
-      if (aff) affiliateValid = true;
-    }
-
-    const resolved = [];
-    for (const it of items) {
-      let p = null;
-      if (db) {
-        p = await db.collection('products').findOne({ id: String(it.id) });
-      }
-      if (!p) {
-        p = DUMMY_PRODUCTS.find((dp) => dp.id === String(it.id));
-      }
-
-      const unitPrice = Number(it.price || p?.price || 0);
-      const lineTotal = unitPrice * (it.qty || 1);
-      subtotal += lineTotal;
-
-      resolved.push({
-        id: String(it.id),
-        name: it.name || p?.name || p?.title || 'Produk Soraya',
-        price: unitPrice,
-        qty: it.qty || 1,
-        image: it.image || p?.image || ''
-      });
-    }
-
-    const finalShippingCost = Number(shippingCost || 0);
-    const grandTotal = subtotal + finalShippingCost;
-    const orderId = `SRC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const komercePayment = await createKomerceQris(
-      orderId,
-      grandTotal,
-      customer?.name,
-      customer?.email
-    );
-
-    const orderDoc = {
-      orderId,
-      items: resolved,
-      subtotal,
-      shippingCost: finalShippingCost,
-      shippingMethod: shippingMethod || 'standard',
-      grandTotal,
-      customer: customer || {},
-      address: address || {},
-      status: 'pending_payment',
-      paymentMethod: 'qris_komerce',
-      qrisUrl: komercePayment.qrisUrl,
-      invoiceUrl: komercePayment.invoiceUrl,
-      refCode: affiliateValid ? refCode : null,
-      createdAt: new Date()
-    };
-
-    if (db) {
-      await db.collection('orders').insertOne(orderDoc);
-    }
-
-    return NextResponse.json({
-      success: true,
-      orderId,
-      grandTotal,
-      qrisUrl: komercePayment.qrisUrl,
-      invoiceUrl: komercePayment.invoiceUrl,
-      message: 'Pesanan berhasil dibuat, silakan lakukan pembayaran QRIS'
-    });
-  } catch (err) {
-    console.error('Checkout error:', err);
-    return NextResponse.json({ error: 'Gagal memproses checkout', details: err.message }, { status: 500 });
-  }
-}
-
 // Handler GET Route
 export async function GET(req, { params }) {
-  const path = params?.path || [];
+  const resolvedParams = await params;
+  const path = resolvedParams?.path || [];
   const fullPath = path.join('/');
 
   const db = await getDb();
 
-  // Handle get single product by ID
+  // 1. Single Product Detail: GET /api/products/[id]
   if (path.length >= 2 && path[path.length - 2] === 'products') {
     const prodId = path[path.length - 1];
     let prod = null;
@@ -358,33 +216,47 @@ export async function GET(req, { params }) {
       prod = await db.collection('products').findOne({ id: String(prodId) });
     }
     if (!prod) {
-      prod = DUMMY_PRODUCTS.find((p) => p.id === String(prodId)) || DUMMY_PRODUCTS[0];
+      prod = DUMMY_PRODUCTS.find((p) => String(p.id) === String(prodId)) || DUMMY_PRODUCTS[0];
     }
     return NextResponse.json(prod);
   }
 
-  // Handle list products
-  if (fullPath.includes('products') || fullPath === '' || fullPath === 'soraya' || fullPath === 'api') {
-    let products = [];
+  // 2. Affiliate Detail: GET /api/affiliate/[code]
+  if (path.length >= 2 && path[path.length - 2] === 'affiliate') {
+    const code = path[path.length - 1];
+    let aff = null;
     if (db) {
-      try {
-        products = await db.collection('products').find({}).toArray();
-      } catch (e) {
-        products = [];
-      }
+      aff = await db.collection('affiliates').findOne({ code });
     }
-    if (!products || products.length === 0) {
-      products = DUMMY_PRODUCTS;
-    }
-    return NextResponse.json(products);
+    return NextResponse.json({
+      success: true,
+      affiliate: aff || { code, name: 'Mitra Soraya', commissionPct: 10 }
+    });
   }
 
-  return NextResponse.json(DUMMY_PRODUCTS);
+  // 3. Products List: GET /api/products
+  let products = [];
+  if (db) {
+    try {
+      products = await db.collection('products').find({}).toArray();
+    } catch (e) {
+      products = [];
+    }
+  }
+  if (!products || products.length === 0) {
+    products = DUMMY_PRODUCTS;
+  }
+
+  // Return objek dengan array `items` dan array murni agar aman di semua komponen frontend
+  return NextResponse.json(
+    Object.assign([...products], { items: products, products })
+  );
 }
 
 // Handler POST Route
 export async function POST(req, { params }) {
-  const path = params?.path || [];
+  const resolvedParams = await params;
+  const path = resolvedParams?.path || [];
   const endpoint = path.join('/');
 
   if (endpoint.includes('auth') || endpoint.includes('otp') || endpoint.includes('login')) {
@@ -393,20 +265,6 @@ export async function POST(req, { params }) {
       message: 'Kode OTP berhasil dikirim (Sandbox Mode)',
       otp: '123456'
     });
-  }
-
-  if (endpoint.includes('checkout')) {
-    return handleCheckout(req);
-  }
-
-  if (endpoint.includes('shipping')) {
-    try {
-      const body = await req.json();
-      const costs = await calculateKomerceShipping(body.destination, body.weight, body.courier);
-      return NextResponse.json({ success: true, costs });
-    } catch {
-      return NextResponse.json({ error: 'Gagal menghitung ongkir Komerce' }, { status: 400 });
-    }
   }
 
   return NextResponse.json({ error: 'Endpoint tidak ditemukan' }, { status: 404 });
