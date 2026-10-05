@@ -5,8 +5,9 @@ import { MongoClient } from 'mongodb';
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'soraya_co';
 
-const KOMERCE_SHIPPING_KEY = process.env.KOMERCE_SHIPPING_KEY;
-const KOMERCE_PAYMENT_KEY = process.env.KOMERCE_PAYMENT_KEY;
+// Membaca API Key Komerc dari Vercel Environment Variables
+const KOMERCE_SHIPPING_KEY = process.env.KOMERCE_SHIPPING_KEY || process.env.KOMERC_T_KEY || '';
+const KOMERCE_PAYMENT_KEY = process.env.KOMERCE_PAYMENT_KEY || process.env.KOMERC_G_KEY || '';
 
 let cachedClient = null;
 let cachedDb = null;
@@ -15,18 +16,20 @@ let cachedDb = null;
 const DUMMY_PRODUCTS = [
   {
     "id": "1",
-    "name": "Tunik Rayon Maroon Polos",
-    "title": "Tunik Rayon Maroon Polos",
-    "price": 129000,
-    "category": "Tunik Rayon",
+    "name": "Soraya Blouse Linen Beige",
+    "title": "Soraya Blouse Linen Beige",
+    "price": 185000,
+    "originalPrice": 245000,
+    "discount": "24%",
+    "category": "Blouse",
     "weight_grams": 220,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/tunik-maroon-01.jpg",
-    "description": "Bahan rayon adem, cocok dipakai harian, tersedia 5 warna",
+    "image": "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800&auto=format&fit=crop&q=60",
+    "description": "Blouse linen premium dengan potongan minimalis dan nyaman untuk penggunaan sehari-hari.",
     "variants": [
       {
-        "sku": "TRM-001",
-        "name": "Default",
+        "sku": "SBL-001",
+        "name": "Beige",
         "stock": 45,
         "size": "All Size (Fit L)"
       }
@@ -34,37 +37,41 @@ const DUMMY_PRODUCTS = [
   },
   {
     "id": "2",
-    "name": "Gamis Maxy Motif Bunga",
-    "title": "Gamis Maxy Motif Bunga",
-    "price": 189000,
-    "category": "Gamis Maxy",
-    "weight_grams": 350,
+    "name": "Atasan Katun Hitam Minimal",
+    "title": "Atasan Katun Hitam Minimal",
+    "price": 165000,
+    "originalPrice": 199000,
+    "discount": "17%",
+    "category": "Atasan (Top)",
+    "weight_grams": 200,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/gamis-motif-bunga.jpg",
-    "description": "Motif bunga eksklusif, lengan panjang, resleting depan",
+    "image": "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=800&auto=format&fit=crop&q=60",
+    "description": "Atasan katun hitam sejuk dengan detail kerah minimalis elegan.",
     "variants": [
       {
-        "sku": "GMB-014",
-        "name": "Default",
+        "sku": "AKH-002",
+        "name": "Hitam",
         "stock": 20,
-        "size": "L, XL,XXL"
+        "size": "L, XL"
       }
     ]
   },
   {
     "id": "3",
-    "name": "Blouse Kancing Depan",
-    "title": "Blouse Kancing Depan",
-    "price": 89000,
-    "category": "Blouse",
-    "weight_grams": 180,
+    "name": "Tunik Rayon Monokrom",
+    "title": "Tunik Rayon Monokrom",
+    "price": 215000,
+    "originalPrice": 265000,
+    "discount": "19%",
+    "category": "Tunik Rayon",
+    "weight_grams": 250,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/blouse-kancing.jpg",
-    "description": "Blouse kerja/casual, bahan katun tidak menerawang",
+    "image": "https://images.unsplash.com/photo-1551803091-e20673f15770?w=800&auto=format&fit=crop&q=60",
+    "description": "Tunik bahan rayon jatuh dan ringan dengan motif monokrom modern.",
     "variants": [
       {
-        "sku": "BKD-005",
-        "name": "Default",
+        "sku": "TRM-003",
+        "name": "Monokrom",
         "stock": 35,
         "size": "M, L"
       }
@@ -72,18 +79,20 @@ const DUMMY_PRODUCTS = [
   },
   {
     "id": "4",
-    "name": "Midi Dress Rayon Polos",
-    "title": "Midi Dress Rayon Polos",
-    "price": 145000,
-    "category": "Midi Dress",
-    "weight_grams": 280,
+    "name": "Gamis Maxy Elegant Noir",
+    "title": "Gamis Maxy Elegant Noir",
+    "price": 345000,
+    "originalPrice": 425000,
+    "discount": "18%",
+    "category": "Gamis Maxy",
+    "weight_grams": 380,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/midi-dress-polos.jpg",
-    "description": "Model midi, cocok acara formal maupun santai",
+    "image": "https://images.unsplash.com/photo-1566174053879-31528523f8ae?w=800&auto=format&fit=crop&q=60",
+    "description": "Gamis maxy anggun dengan aksen pita di pinggang dan bahan satin silk premium.",
     "variants": [
       {
-        "sku": "MDR-009",
-        "name": "Default",
+        "sku": "GME-004",
+        "name": "Noir Black",
         "stock": 15,
         "size": "All Size"
       }
@@ -91,36 +100,61 @@ const DUMMY_PRODUCTS = [
   },
   {
     "id": "5",
-    "name": "Setelan Kulot Rayon",
-    "title": "Setelan Kulot Rayon",
-    "price": 175000,
-    "category": "Setelan",
-    "weight_grams": 400,
+    "name": "Midi Dress Rayon Polos",
+    "title": "Midi Dress Rayon Polos",
+    "price": 145000,
+    "originalPrice": 179000,
+    "discount": "19%",
+    "category": "Midi Dress",
+    "weight_grams": 280,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/setelan-kulot.jpg",
-    "description": "Set atasan + kulot, bahan rayon premium",
+    "image": "https://images.unsplash.com/photo-1496747611176-843222e1e57c?w=800&auto=format&fit=crop&q=60",
+    "description": "Model midi, cocok acara formal maupun santai",
     "variants": [
       {
-        "sku": "SKR-011",
+        "sku": "MDR-005",
         "name": "Default",
         "stock": 25,
-        "size": "L, XL"
+        "size": "All Size"
       }
     ]
   },
   {
     "id": "6",
+    "name": "Setelan Kulot Rayon",
+    "title": "Setelan Kulot Rayon",
+    "price": 175000,
+    "originalPrice": 210000,
+    "discount": "16%",
+    "category": "Setelan",
+    "weight_grams": 400,
+    "dimensions": "3cm x 3cm x 3cm",
+    "image": "https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800&auto=format&fit=crop&q=60",
+    "description": "Set atasan + kulot, bahan rayon premium",
+    "variants": [
+      {
+        "sku": "SKR-006",
+        "name": "Default",
+        "stock": 30,
+        "size": "L, XL"
+      }
+    ]
+  },
+  {
+    "id": "7",
     "name": "Piyama Set Katun Motif",
     "title": "Piyama Set Katun Motif",
     "price": 99000,
+    "originalPrice": 125000,
+    "discount": "20%",
     "category": "Pyajamas",
     "weight_grams": 300,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/piyama-motif.jpg",
+    "image": "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=60",
     "description": "Piyama set atasan + celana, bahan katun lembut",
     "variants": [
       {
-        "sku": "PSK-003",
+        "sku": "PSK-007",
         "name": "Default",
         "stock": 50,
         "size": "All Size"
@@ -128,273 +162,22 @@ const DUMMY_PRODUCTS = [
     ]
   },
   {
-    "id": "7",
-    "name": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON FULL KANCING JUMBO / KEMEJA",
-    "title": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON FULL KANCING JUMBO / KEMEJA",
+    "id": "8",
+    "name": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON",
+    "title": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON",
     "price": 79000,
+    "originalPrice": 99000,
+    "discount": "20%",
     "category": "Atasan (Top)",
     "weight_grams": 250,
     "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/",
-    "description": "KEMEJA OVERSIZE\nBahan : Rayon Uniqlo\nLd baju : 130 cm\nPj baju depan : -+70 cm\nPj baju Belakang : -+ 80 cm\nLingkar ketiak : -+ 55 cm",
+    "image": "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=800&auto=format&fit=crop&q=60",
+    "description": "KEMEJA OVERSIZE Bahan Rayon Uniqlo, LD 130 cm",
     "variants": [
       {
-        "sku": "TRM-004-1",
+        "sku": "TRM-008",
         "name": "MIKA GREY",
         "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-2",
-        "name": "MIKA DUSTY",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-3",
-        "name": "NONA MAGENTA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-4",
-        "name": "WILONA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-5",
-        "name": "POLKA HITAM",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-6",
-        "name": "AISHA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-7",
-        "name": "FREESIA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-8",
-        "name": "SHOFIA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-9",
-        "name": "LYODRA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-10",
-        "name": "MAWAR",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-11",
-        "name": "LEONA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-12",
-        "name": "TAMARA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-13",
-        "name": "ALANA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-14",
-        "name": "LILA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-15",
-        "name": "SELINA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-16",
-        "name": "KAMILA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-17",
-        "name": "YURA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-18",
-        "name": "SARAH",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-19",
-        "name": "MARBEL",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-20",
-        "name": "NAOMI",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-21",
-        "name": "FEROSA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-22",
-        "name": "SORA CREAM",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-23",
-        "name": "IRIS",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-24",
-        "name": "MARLEN",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-25",
-        "name": "MESYA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-26",
-        "name": "CLARA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-27",
-        "name": "AGNES",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-28",
-        "name": "CUNDA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-29",
-        "name": "AMEENA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-30",
-        "name": "SANIA",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-31",
-        "name": "MARIGOLD",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-32",
-        "name": "SUNFLOWER",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-33",
-        "name": "TULIP",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-34",
-        "name": "RIYUKI",
-        "stock": 50,
-        "size": "One Size"
-      },
-      {
-        "sku": "TRM-004-35",
-        "name": "ALUNA",
-        "stock": 50,
-        "size": "One Size"
-      }
-    ]
-  },
-  {
-    "id": "8",
-    "name": "ALYSA BLOUSE ATASAN WANITA RAYON MOTIF",
-    "title": "ALYSA BLOUSE ATASAN WANITA RAYON MOTIF",
-    "price": 89000,
-    "category": "Blouse",
-    "weight_grams": 200,
-    "dimensions": "3cm x 3cm x 3cm",
-    "image": "https://i.ibb.co.com/TBp8HxGq/",
-    "description": "Bahan : Rayon Premium\nTersedia 3 ukuran :\n- Standar : LD 110 CM\n- Jumbo : LD 120 CM\n- Super Jumbo : LD 130 CM\nModel : Kerah Shanghai\nPergelangan Tangan Model Terompet",
-    "variants": [
-      {
-        "sku": "BKD-001",
-        "name": "LB. ALYSA",
-        "stock": 60,
-        "size": "One Size"
-      },
-      {
-        "sku": "BKD-002",
-        "name": "LB. ERICA",
-        "stock": 60,
-        "size": "One Size"
-      },
-      {
-        "sku": "BKD-003",
-        "name": "LB. LAVENDER",
-        "stock": 60,
-        "size": "One Size"
-      },
-      {
-        "sku": "BKD-004",
-        "name": "LB. TIARA",
-        "stock": 60,
-        "size": "One Size"
-      },
-      {
-        "sku": "BKD-005",
-        "name": "LB. LUNA BLACK",
-        "stock": 60,
-        "size": "One Size"
-      },
-      {
-        "sku": "BKD-006",
-        "name": "LB. SASKIA",
-        "stock": 60,
         "size": "One Size"
       }
     ]
@@ -406,7 +189,7 @@ async function getDb() {
   if (cachedDb) return cachedDb;
   try {
     if (!cachedClient) {
-      cachedClient = new MongoClient(MONGO_URL, { connectTimeoutMS: 5000, socketTimeoutMS: 5000 });
+      cachedClient = new MongoClient(MONGO_URL, { connectTimeoutMS: 3000, socketTimeoutMS: 3000 });
       await cachedClient.connect();
     }
     cachedDb = cachedClient.db(DB_NAME);
@@ -424,7 +207,7 @@ async function calculateKomerceShipping(destination, weightGrams, courier) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'key': KOMERCE_SHIPPING_KEY || ''
+        'key': KOMERCE_SHIPPING_KEY
       },
       body: JSON.stringify({
         destination: destination,
@@ -447,7 +230,7 @@ async function createKomerceQris(orderId, amount, customerName, customerEmail) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': KOMERCE_PAYMENT_KEY || ''
+        'x-api-key': KOMERCE_PAYMENT_KEY
       },
       body: JSON.stringify({
         partner_order_id: orderId,
@@ -584,7 +367,11 @@ export async function GET(req, { params }) {
   if (fullPath.includes('products') || fullPath === '' || fullPath === 'soraya' || fullPath === 'api') {
     let products = [];
     if (db) {
-      products = await db.collection('products').find({}).toArray();
+      try {
+        products = await db.collection('products').find({}).toArray();
+      } catch (e) {
+        products = [];
+      }
     }
     if (!products || products.length === 0) {
       products = DUMMY_PRODUCTS;
