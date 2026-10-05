@@ -2,24 +2,22 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import Header from '@/components/soraya/Header';
-import CategoryPills from '@/components/soraya/CategoryPills';
-import ProductCard from '@/components/soraya/ProductCard';
-import CartDrawer from '@/components/soraya/CartDrawer';
-import ReferralTracker from '@/components/soraya/ReferralTracker';
 
 function MainContent() {
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('Semua');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [cartOpen, setCartOpen] = useState(false);
 
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const cat = searchParams.get('category');
-    if (cat) setCategory(cat);
+    try {
+      const cat = searchParams?.get('category');
+      if (cat) setCategory(cat);
+    } catch (e) {
+      console.error(e);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -44,7 +42,10 @@ function MainContent() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = products.filter((p) => {
+  const categories = ['Semua', 'Atasan (Top)', 'Blouse', 'Tunik Rayon', 'Gamis Maxy', 'Midi Dress', 'Setelan', 'Pyajamas'];
+
+  const filtered = (products || []).filter((p) => {
+    if (!p) return false;
     const matchCat = category === 'Semua' || p.category === category;
     const matchSearch =
       !search ||
@@ -54,12 +55,30 @@ function MainContent() {
   });
 
   return (
-    <div className="min-h-screen bg-white">
-      <ReferralTracker />
-      <Header onSearch={setSearch} searchValue={search} onCartClick={() => setCartOpen(true)} />
+    <div className="min-h-screen bg-white text-stone-800 font-sans">
+      {/* HEADER SIMPLE */}
+      <header className="border-b border-stone-200 sticky top-0 bg-white/80 backdrop-blur z-10 px-4 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+          <a href="/" className="text-xl font-serif font-bold text-stone-900">
+            Soraya.Co
+          </a>
+          <div className="flex-1 max-w-md">
+            <input
+              type="text"
+              placeholder="Cari produk..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-stone-100 px-4 py-2 rounded-full text-sm outline-none focus:ring-2 focus:ring-stone-300"
+            />
+          </div>
+          <a href="/affiliate" className="text-sm font-medium hover:underline">
+            Afiliasi
+          </a>
+        </div>
+      </header>
 
-      {/* --- BANNER HERO --- */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 pt-4">
+      {/* BANNER HERO */}
+      <div className="max-w-7xl mx-auto px-4 md:px-6 pt-6">
         <div className="bg-stone-100 rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
             <h1 className="text-3xl md:text-5xl font-serif text-stone-900 mb-2">
@@ -78,12 +97,24 @@ function MainContent() {
         </div>
       </div>
 
-      {/* --- PILIHAN KATEGORI --- */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-        <CategoryPills activeCategory={category} onSelectCategory={setCategory} />
+      {/* PILIHAN KATEGORI */}
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 flex gap-2 overflow-x-auto no-scrollbar">
+        {categories.map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setCategory(cat)}
+            className={`px-4 py-2 rounded-full text-xs md:text-sm font-medium whitespace-nowrap transition ${
+              category === cat
+                ? 'bg-stone-900 text-white'
+                : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
-      {/* --- GRID PRODUK --- */}
+      {/* GRID PRODUK */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 pb-16">
         {loading ? (
           <div className="text-center py-16 text-stone-500">Memuat produk...</div>
@@ -92,14 +123,36 @@ function MainContent() {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 md:gap-6">
             {filtered.map((prod) => (
-              <ProductCard key={prod.id} product={prod} />
+              <a
+                key={prod.id || prod._id}
+                href={`/product/${prod.id || prod._id}`}
+                className="group border border-stone-100 rounded-xl overflow-hidden hover:shadow-lg transition bg-white block"
+              >
+                <div className="aspect-[3/4] bg-stone-100 overflow-hidden relative">
+                  <img
+                    src={prod.image || 'https://via.placeholder.com/400'}
+                    alt={prod.name || 'Produk'}
+                    className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                  />
+                </div>
+                <div className="p-4">
+                  <h3 className="font-medium text-sm text-stone-900 line-clamp-1">
+                    {prod.name}
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-1">{prod.category}</p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="font-semibold text-sm text-stone-900">
+                      Rp {Number(prod.price || 0).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                </div>
+              </a>
             ))}
           </div>
         )}
       </main>
 
-      <CartDrawer isOpen={cartOpen} onClose={() => setCartOpen(false)} />
-
+      {/* FOOTER */}
       <footer className="border-t border-stone-200 py-8 bg-stone-50">
         <div className="max-w-7xl mx-auto px-4 md:px-6 flex flex-col md:flex-row items-center justify-between text-xs text-stone-500 gap-4">
           <p>&copy; {new Date().getFullYear()} Soraya.Co &mdash; Modest wear untuk setiap hari.</p>
