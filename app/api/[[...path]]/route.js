@@ -35,17 +35,17 @@ export async function GET(request) {
   return NextResponse.json({ products: DUMMY_PRODUCTS });
 }
 
-export async function POST(request, { params }) {
-  const url = new URL(request.url);
-  
-  // Tangkap semua request OTP WhatsApp maupun Email
-  if (url.pathname.includes('/auth') || url.pathname.includes('/otp')) {
-    return NextResponse.json({
-      success: true,
-      message: 'Kode OTP berhasil dikirim (Dummy Mode: 123456)',
-      otp: '123456'
-    });
-  }
-
-  return NextResponse.json({ success: true });
+export async function POST(request) {
+  // Tangkap semua POST request (Login, OTP, Auth, dll)
+  return NextResponse.json({
+    success: true,
+    message: 'Berhasil dikirim (Dummy Mode)',
+    otp: '123456',
+    user: {
+      id: 'dummy-user-1',
+      name: 'Pelanggan Soraya',
+      email: 'lazkids02@gmail.com',
+      phone: '0852156666'
+    }
+  });
 }
