@@ -43,7 +43,45 @@ function HomePageContent() {
     <div className="min-h-screen bg-white">
       <ReferralTracker />
       <Header onSearch={setSearch} searchValue={search} onCartClick={() => setCartOpen(true)} />
+
+      <div className="relative w-full overflow-hidden rounded-2xl mb-8 bg-black text-white shadow-lg">
+        <div className="relative h-64 sm:h-80 md:h-96 w-full">
+          <img
+            src="/hero-banner.jpg"
+            alt="Hero Promo Soraya.Co"
+            className="w-full h-full object-cover opacity-80"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex flex-col justify-end p-6 sm:p-10">
+            <span className="inline-block bg-rose-600 text-white text-xs font-semibold px-3 py-1 rounded-full w-fit mb-3 uppercase tracking-wider">
+              Promo Spesial
+            </span>
+            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight mb-2">
+              Koleksi Modest Wear Terbaru
+            </h1>
+            <p className="text-sm sm:text-base text-gray-200 max-w-xl mb-4">
+              Dapatkan potongan harga menarik dan promo gratis ongkir ke seluruh Indonesia.
+            </p>
+            <div>
+              <a
+                href="#produk"
+                className="inline-block bg-white text-black font-bold px-6 py-2.5 rounded-full text-sm hover:bg-gray-100 transition-all shadow-md"
+              >
+                Belanja Sekarang →
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <CategoryPills value={category} onChange={setCategory} />
+
+        >
+          Belanja Sekarang →
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
 
       {refBanner && (
         <div className="bg-[#111111] text-white text-xs text-center py-2 px-4">
