@@ -25,15 +25,28 @@ function HomePageContent() {
     return () => clearTimeout(t);
   }, [searchParams]);
 
-  useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (category && category !== 'all') params.set('category', category);
-    if (search) params.set('search', search);
-    fetch('/api/products?' + params.toString())
-      .then((r) => r.json())
-      .then((d) => setProducts(d.items || []))
-      .finally(() => setLoading(false));
+ useEffect(() => {
+  setLoading(true);
+  fetch('/api/products')
+    .then((r) => r.json())
+    .then((d) => {
+      // Menangani jika API mengembalikan Array langsung atau Object { items: [...] }
+      if (Array.isArray(d)) {
+        setProducts(d);
+      } else if (d && Array.isArray(d.items)) {
+        setProducts(d.items);
+      } else if (d && Array.isArray(d.products)) {
+        setProducts(d.products);
+      } else {
+        setProducts([]);
+      }
+    })
+    .catch((err) => {
+      console.error('Fetch error:', err);
+      setProducts([]);
+    })
+    .finally(() => setLoading(false));
+}, []);
   }, [category, search]);
 
   return (
