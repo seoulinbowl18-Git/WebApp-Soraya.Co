@@ -9,7 +9,7 @@ export async function GET(request) {
   }
 
   try {
-    const apiKey = process.env.KOMERCE_SANDBOX_KEY;
+    const apiKey = process.env.KOMERCE_SHIPPING_KEY || process.env.KOMERCE_SANDBOX_KEY;
 
     const response = await fetch(
       `https://api-sandbox.collaborator.komerce.id/tariff/api/v1/destination/?keyword=${encodeURIComponent(keyword)}`,
