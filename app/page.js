@@ -46,7 +46,8 @@ function HomePageContent() {
         <div className="relative w-full overflow-hidden rounded-2xl mb-6 bg-black text-white shadow-lg">
           <div className="relative h-64 sm:h-80 md:h-96 w-full">
             <img
-              src="/https://ibb.co.com/ynGy8cCB"
+              src="https://i.ibb.co.com/TBp8HxGq/IMG-6406.jpg
+"
               alt="Hero Promo Soraya.Co"
               className="w-full h-full object-cover opacity-80"
             />
