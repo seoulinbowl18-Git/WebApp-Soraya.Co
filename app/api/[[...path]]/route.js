@@ -14,42 +14,70 @@ let cachedDb = null;
 // Data Produk Fallback / Dummy jika MongoDB tidak terkoneksi atau kosong
 const DUMMY_PRODUCTS = [
   {
-    id: '1',
-    name: 'Gamis Maxy Premium Soraya',
-    title: 'Gamis Maxy Premium Soraya',
-    price: 185000,
-    category: 'Gamis Maxy',
-    image: 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=600&q=80',
-    description: 'Gamis bahan rayon premium lembut, adem, dan sangat nyaman dipakai seharian.'
+    "title": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON FULL KANCING JUMBO / KEMEJA",
+    ...
+  {
+    "title": "OVERSIZE BLOUSE MOTIF - ATASAN RAYON FULL KANCING JUMBO / KEMEJA",
+    "category": "Atasan (Top)",
+    "price": 79000,
+    "weight_grams": 250,
+    "dimensions": "3cm x 3cm x 3cm",
+    "description": "KEMEJA OVERSIZE\nBahan : Rayon Uniqlo\nLd baju : 130 cm\nPj baju depan : -+70 cm\nPj baju Belakang : -+ 80 cm\nLingkar ketiak : -+ 55 cm",
+    "variants": [
+      {"sku": "TRM-004-1", "name": "MIKA GREY", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-2", "name": "MIKA DUSTY", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-3", "name": "NONA MAGENTA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-4", "name": "WILONA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-5", "name": "POLKA HITAM", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-6", "name": "AISHA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-7", "name": "FREESIA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-8", "name": "SHOFIA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-9", "name": "LYODRA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-10", "name": "MAWAR", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-11", "name": "LEONA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-12", "name": "TAMARA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-13", "name": "ALANA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-14", "name": "LILA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-15", "name": "SELINA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-16", "name": "KAMILA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-17", "name": "YURA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-18", "name": "SARAH", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-19", "name": "MARBEL", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-20", "name": "NAOMI", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-21", "name": "FEROSA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-22", "name": "SORA CREAM", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-23", "name": "IRIS", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-24", "name": "MARLEN", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-25", "name": "MESYA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-26", "name": "CLARA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-27", "name": "AGNES", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-28", "name": "CUNDA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-29", "name": "AMEENA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-30", "name": "SANIA", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-31", "name": "MARIGOLD", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-32", "name": "SUNFLOWER", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-33", "name": "TULIP", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-34", "name": "RIYUKI", "stock": 50, "size": "One Size"},
+      {"sku": "TRM-004-35", "name": "ALUNA", "stock": 50, "size": "One Size"}
+    ]
   },
   {
-    id: '2',
-    name: 'Blouse Style Korean Soraya',
-    title: 'Blouse Style Korean Soraya',
-    price: 125000,
-    category: 'Blouse',
-    image: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80',
-    description: 'Blouse atasan kasual elegan dengan potongan minimalis ala Korea.'
-  },
-  {
-    id: '3',
-    name: 'Tunik Rayon Polos Premium',
-    title: 'Tunik Rayon Polos Premium',
-    price: 145000,
-    category: 'Tunik Rayon',
-    image: 'https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&w=600&q=80',
-    description: 'Tunik rayon simpel dengan pilihan warna kekinian yang manis.'
-  },
-  {
-    id: '4',
-    name: 'Atasan Casual Modest',
-    title: 'Atasan Casual Modest',
-    price: 110000,
-    category: 'Atasan (Top)',
-    image: 'https://images.unsplash.com/photo-1434389677669-e08b4cac3105?auto=format&fit=crop&w=600&q=80',
-    description: 'Atasan simpel nan elegan cocok untuk kuliah, kerja, maupun jalan-jalan.'
+    "title": "ALYSA BLOUSE ATASAN WANITA RAYON MOTIF",
+    "category": "Blouse",
+    "price": 89000,
+    "weight_grams": 200,
+    "dimensions": "3cm x 3cm x 3cm",
+    "description": "Bahan : Rayon Premium\nTersedia 3 ukuran :\n- Standar : LD 110 CM\n- Jumbo : LD 120 CM\n- Super Jumbo : LD 130 CM\nModel : Kerah Shanghai\nPergelangan Tangan Model Terompet",
+    "variants": [
+      {"sku": "BKD-001", "name": "LB. ALYSA", "stock": 60, "sizes": ["L", "XL", "XXL"]},
+      {"sku": "BKD-002", "name": "LB. ERICA", "stock": 60, "sizes": ["L", "XL", "XXL"]},
+      {"sku": "BKD-003", "name": "LB. LAVENDER", "stock": 60, "sizes": ["L", "XL", "XXL"]},
+      {"sku": "BKD-004", "name": "LB. TIARA", "stock": 60, "sizes": ["L", "XL", "XXL"]},
+      {"sku": "BKD-005", "name": "LB. LUNA BLACK", "stock": 60, "sizes": ["L", "XL", "XXL"]},
+      {"sku": "BKD-006", "name": "LB. SASKIA", "stock": 60, "sizes": ["L", "XL", "XXL"]}
+    ]
   }
-];
+]
 
 async function getDb() {
   if (!MONGO_URL) return null;
