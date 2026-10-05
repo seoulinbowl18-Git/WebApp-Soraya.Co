@@ -1,26 +1,20 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
 
-function MainContent() {
+export default function Page() {
+  const [mounted, setMounted] = useState(false);
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('Semua');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const searchParams = useSearchParams();
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
-    try {
-      const cat = searchParams?.get('category');
-      if (cat) setCategory(cat);
-    } catch (e) {
-      console.error(e);
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
+    if (!mounted) return;
     setLoading(true);
     fetch('/api/products')
       .then((r) => r.json())
@@ -40,7 +34,15 @@ function MainContent() {
         setProducts([]);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [mounted]);
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center p-6 text-stone-500">
+        Memuat Soraya.Co...
+      </div>
+    );
+  }
 
   const categories = ['Semua', 'Atasan (Top)', 'Blouse', 'Tunik Rayon', 'Gamis Maxy', 'Midi Dress', 'Setelan', 'Pyajamas'];
 
@@ -49,15 +51,15 @@ function MainContent() {
     const matchCat = category === 'Semua' || p.category === category;
     const matchSearch =
       !search ||
-      p.name?.toLowerCase().includes(search.toLowerCase()) ||
-      p.description?.toLowerCase().includes(search.toLowerCase());
+      (p.name && p.name.toLowerCase().includes(search.toLowerCase())) ||
+      (p.description && p.description.toLowerCase().includes(search.toLowerCase()));
     return matchCat && matchSearch;
   });
 
   return (
     <div className="min-h-screen bg-white text-stone-800 font-sans">
-      {/* HEADER SIMPLE */}
-      <header className="border-b border-stone-200 sticky top-0 bg-white/80 backdrop-blur z-10 px-4 py-3">
+      {/* HEADER */}
+      <header className="border-b border-stone-200 sticky top-0 bg-white/90 backdrop-blur z-10 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <a href="/" className="text-xl font-serif font-bold text-stone-900">
             Soraya.Co
@@ -77,7 +79,7 @@ function MainContent() {
         </div>
       </header>
 
-      {/* BANNER HERO */}
+      {/* HERO BANNER */}
       <div className="max-w-7xl mx-auto px-4 md:px-6 pt-6">
         <div className="bg-stone-100 rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
@@ -97,8 +99,8 @@ function MainContent() {
         </div>
       </div>
 
-      {/* PILIHAN KATEGORI */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 flex gap-2 overflow-x-auto no-scrollbar">
+      {/* CATEGORY PILLS */}
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 flex gap-2 overflow-x-auto">
         {categories.map((cat) => (
           <button
             key={cat}
@@ -114,7 +116,7 @@ function MainContent() {
         ))}
       </div>
 
-      {/* GRID PRODUK */}
+      {/* PRODUCT GRID */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 pb-16">
         {loading ? (
           <div className="text-center py-16 text-stone-500">Memuat produk...</div>
@@ -124,13 +126,13 @@ function MainContent() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 md:gap-6">
             {filtered.map((prod) => (
               <a
-                key={prod.id || prod._id}
-                href={`/product/${prod.id || prod._id}`}
+                key={prod.id || prod._id || Math.random()}
+                href={`/product/${prod.id || prod._id || '1'}`}
                 className="group border border-stone-100 rounded-xl overflow-hidden hover:shadow-lg transition bg-white block"
               >
                 <div className="aspect-[3/4] bg-stone-100 overflow-hidden relative">
                   <img
-                    src={prod.image || 'https://via.placeholder.com/400'}
+                    src={prod.image || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800'}
                     alt={prod.name || 'Produk'}
                     className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                   />
@@ -164,13 +166,5 @@ function MainContent() {
         </div>
       </footer>
     </div>
-  );
-}
-
-export default function Page() {
-  return (
-    <Suspense fallback={<div className="p-8 text-center">Loading...</div>}>
-      <MainContent />
-    </Suspense>
   );
 }
