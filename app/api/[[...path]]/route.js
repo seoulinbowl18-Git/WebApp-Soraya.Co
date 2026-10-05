@@ -28,32 +28,24 @@ const DUMMY_PRODUCTS = [
     category: "Tunik Rayon",
     image: "https://images.unsplash.com/photo-1551803091-e20673f15770?w=800&auto=format&fit=crop&q=60",
     description: "Tunik bahan rayon jatuh dan ringan."
-  },
-  {
-    id: "4",
-    name: "Gamis Maxy Elegant Noir",
-    price: 345000,
-    originalPrice: 425000,
-    category: "Gamis Maxy",
-    image: "https://images.unsplash.com/photo-1566174053879-31528523f8ae?w=800&auto=format&fit=crop&q=60",
-    description: "Gamis maxy anggun bahan satin silk."
   }
 ];
 
-export async function GET(req, { params }) {
-  const resolvedParams = await params;
-  const path = resolvedParams?.path || [];
+export async function GET(request) {
+  return NextResponse.json({ products: DUMMY_PRODUCTS });
+}
 
-  // Jika memanggil /api/products/[id]
-  if (path.length >= 2 && path[0] === 'products') {
-    const prodId = path[1];
-    const prod = DUMMY_PRODUCTS.find((p) => String(p.id) === String(prodId)) || DUMMY_PRODUCTS[0];
-    return NextResponse.json(prod);
+export async function POST(request, { params }) {
+  const url = new URL(request.url);
+  
+  // Tangkap semua request OTP WhatsApp maupun Email
+  if (url.pathname.includes('/auth') || url.pathname.includes('/otp')) {
+    return NextResponse.json({
+      success: true,
+      message: 'Kode OTP berhasil dikirim (Dummy Mode: 123456)',
+      otp: '123456'
+    });
   }
 
-  // Jika memanggil /api/products
-  return NextResponse.json({
-    items: DUMMY_PRODUCTS,
-    products: DUMMY_PRODUCTS
-  });
+  return NextResponse.json({ success: true });
 }
