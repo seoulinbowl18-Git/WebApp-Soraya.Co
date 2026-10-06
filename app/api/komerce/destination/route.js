@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 
+const getShippingBaseUrl = () => {
+  const isSandbox = (process.env.KOMERCE_IS_SANDBOX || 'true').toLowerCase() === 'true';
+  return isSandbox
+    ? 'https://api-sandbox.collaborator.komerce.id'
+    : 'https://api.collaborator.komerce.id';
+};
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const keyword = searchParams.get('keyword');
@@ -10,13 +17,20 @@ export async function GET(request) {
 
   try {
     const apiKey = process.env.KOMERCE_SHIPPING_KEY || process.env.KOMERCE_SANDBOX_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { success: false, message: 'KOMERCE_SHIPPING_KEY belum di-set', data: [] },
+        { status: 500 }
+      );
+    }
 
+    const baseUrl = getShippingBaseUrl();
     const response = await fetch(
-      `https://api-sandbox.collaborator.komerce.id/tariff/api/v1/destination/?keyword=${encodeURIComponent(keyword)}`,
+      `${baseUrl}/tariff/api/v1/destination/?keyword=${encodeURIComponent(keyword)}`,
       {
         method: 'GET',
         headers: {
-          'x-api-key': apiKey || '',
+          'x-api-key': apiKey,
           'Content-Type': 'application/json',
         },
       }
@@ -26,7 +40,7 @@ export async function GET(request) {
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: result.message || 'Gagal mengambil data dari Komerce' },
+        { error: result.message || 'Gagal mengambil data dari Komerce', raw: result },
         { status: response.status }
       );
     }
@@ -35,7 +49,7 @@ export async function GET(request) {
   } catch (error) {
     console.error('Komerce Destination API Error:', error);
     return NextResponse.json(
-      { error: 'Terjadi kesalahan pada server internal' },
+      { error: 'Terjadi kesalahan pada server internal', message: error.message },
       { status: 500 }
     );
   }

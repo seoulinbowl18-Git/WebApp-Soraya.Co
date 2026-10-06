@@ -1,0 +1,107 @@
+import { NextResponse } from 'next/server';
+
+// Base URL helper
+const getKomerceBaseUrl = () => {
+  const isSandbox = (process.env.KOMERCE_IS_SANDBOX || 'true').toLowerCase() === 'true';
+  return isSandbox
+    ? 'https://api-sandbox.collaborator.komerce.id'
+    : 'https://api.collaborator.komerce.id';
+};
+
+// POST /api/komerce/payment/create
+// Body: { orderId, amount, customerName, customerEmail, customerPhone, items: [{name, qty, price}] }
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const {
+      orderId,
+      amount,
+      customerName,
+      customerEmail,
+      customerPhone,
+      items = [],
+    } = body;
+
+    if (!orderId || !amount) {
+      return NextResponse.json(
+        { success: false, message: 'orderId dan amount wajib diisi' },
+        { status: 400 }
+      );
+    }
+
+    if (amount < 10000) {
+      return NextResponse.json(
+        { success: false, message: 'Minimum amount QRIS adalah Rp 10.000' },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.KOMERCE_PAYMENT_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { success: false, message: 'KOMERCE_PAYMENT_KEY belum di-set di environment' },
+        { status: 500 }
+      );
+    }
+
+    const baseUrl = getKomerceBaseUrl();
+    const endpoint = `${baseUrl}/user/api/v1/user/payment/create`;
+
+    const payload = {
+      order_id: orderId,
+      payment_type: 'qris',
+      amount: Math.round(amount),
+      customer: {
+        name: customerName || 'Pelanggan',
+        email: customerEmail || 'customer@soraya.co',
+        phone: customerPhone || '08000000000',
+      },
+      items: items.map((it) => ({
+        name: it.name || 'Produk',
+        quantity: it.qty || 1,
+        price: Math.round(it.price || 0),
+      })),
+    };
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: result.message || result.error || 'Gagal membuat QRIS',
+          raw: result,
+        },
+        { status: response.status }
+      );
+    }
+
+    // Normalize response. Komerce commonly returns qr_string / qr_url / expiry
+    const data = result.data || result;
+    return NextResponse.json({
+      success: true,
+      orderId: data.order_id || orderId,
+      qrString: data.qr_string || data.qris_string || null,
+      qrUrl: data.qr_url || data.qris_image_url || null,
+      amount: data.amount || amount,
+      expiry: data.expired_at || data.expiry || null,
+      paymentId: data.payment_id || data.transaction_id || null,
+      raw: result,
+    });
+  } catch (error) {
+    console.error('Komerce Payment Create Error:', error);
+    return NextResponse.json(
+      { success: false, message: error.message || 'Internal error' },
+      { status: 500 }
+    );
+  }
+}
