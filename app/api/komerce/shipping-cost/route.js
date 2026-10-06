@@ -28,22 +28,21 @@ export async function POST(request) {
     }
 
     const baseUrl = getShippingBaseUrl();
-    const payload = {
-      destination,
-      weight: weight || 1000, // default 1kg
-      courier: 'jne,jnt,sicepat,pos,ninja,anteraja',
-    };
-    // Origin opsional – kalau user set KOMERCE_ORIGIN_ID atau origin dikirim dari client
-    const originId = origin || process.env.KOMERCE_ORIGIN_ID;
-    if (originId) payload.origin = originId;
+    const originId = origin || process.env.KOMERCE_ORIGIN_ID || '574';
+    const qs = new URLSearchParams({
+      origin: String(originId),
+      destination: String(destination),
+      weight: String(weight || 1000),
+      item_value: String(body.item_value || 0),
+      courier: 'jne:jnt:sicepat:pos:ninja:anteraja',
+    }).toString();
 
-    const response = await fetch(`${baseUrl}/tariff/api/v1/calculate`, {
-      method: 'POST',
+    const response = await fetch(`${baseUrl}/tariff/api/v1/calculate?${qs}`, {
+      method: 'GET',
       headers: {
         'x-api-key': apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
     });
 
     // Read response as text first, then try to parse as JSON
