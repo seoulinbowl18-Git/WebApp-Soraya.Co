@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { CATALOG } from '@/lib/catalog';
+import { store } from '@/lib/store';
 
-// GET /api/products → list produk (array)
+// GET /api/products
+// Return object dengan 2 shape agar kompatibel dengan homepage (d.products) & affiliate (d.items)
 export async function GET() {
-  return NextResponse.json(CATALOG);
+  return NextResponse.json({ items: store.catalog, products: store.catalog, data: store.catalog });
 }

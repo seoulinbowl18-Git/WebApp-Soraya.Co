@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import BannerCarousel from '@/components/soraya/BannerCarousel';
+import Footer from '@/components/soraya/Footer';
 
 export default function Page() {
   const [mounted, setMounted] = useState(false);
@@ -79,25 +81,8 @@ export default function Page() {
         </div>
       </header>
 
-      {/* HERO BANNER */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 pt-6">
-        <div className="bg-stone-100 rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div>
-            <h1 className="text-3xl md:text-5xl font-serif text-stone-900 mb-2">
-              Modest. Minimal. Soraya.
-            </h1>
-            <p className="text-stone-600 text-sm md:text-base">
-              Koleksi baru setiap minggu. Gratis ongkir ke seluruh Indonesia.
-            </p>
-          </div>
-          <a
-            href="/affiliate"
-            className="px-6 py-3 bg-stone-900 text-white rounded-full text-sm font-medium hover:bg-stone-800 transition whitespace-nowrap"
-          >
-            Gabung Afiliasi &rarr;
-          </a>
-        </div>
-      </div>
+      {/* HERO BANNER CAROUSEL (editable via admin) */}
+      <BannerCarousel />
 
       {/* CATEGORY PILLS */}
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 flex gap-2 overflow-x-auto">
@@ -155,16 +140,7 @@ export default function Page() {
       </main>
 
       {/* FOOTER */}
-      <footer className="border-t border-stone-200 py-8 bg-stone-50">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 flex flex-col md:flex-row items-center justify-between text-xs text-stone-500 gap-4">
-          <p>&copy; {new Date().getFullYear()} Soraya.Co &mdash; Modest wear untuk setiap hari.</p>
-          <div className="flex gap-4">
-            <a href="/affiliate" className="hover:underline">Afiliasi</a>
-            <a href="#" className="hover:underline">Tentang</a>
-            <a href="#" className="hover:underline">Kontak</a>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }
