@@ -26,7 +26,7 @@ export async function GET(request) {
 
     const baseUrl = getShippingBaseUrl();
     const response = await fetch(
-      `${baseUrl}/tariff/api/v1/destination/?keyword=${encodeURIComponent(keyword)}`,
+      `${baseUrl}/tariff/api/v1/destination?keyword=${encodeURIComponent(keyword)}`,
       {
         method: 'GET',
         headers: {

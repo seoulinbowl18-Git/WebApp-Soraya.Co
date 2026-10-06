@@ -7,15 +7,18 @@ const getKomerceBaseUrl = () => {
     : 'https://api.collaborator.komerce.id';
 };
 
-// GET /api/komerce/payment/status?orderId=xxx
+// GET /api/komerce/payment/status?paymentId=KPAY-xxx (preferred)
+// GET /api/komerce/payment/status?orderId=SRY-xxx     (fallback — hanya info balik, karena Komerce butuh payment_id)
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
+    const paymentId = searchParams.get('paymentId');
     const orderId = searchParams.get('orderId');
+    const lookup = paymentId || orderId;
 
-    if (!orderId) {
+    if (!lookup) {
       return NextResponse.json(
-        { success: false, message: 'orderId wajib diisi' },
+        { success: false, message: 'paymentId atau orderId wajib diisi' },
         { status: 400 }
       );
     }
@@ -29,7 +32,7 @@ export async function GET(request) {
     }
 
     const baseUrl = getKomerceBaseUrl();
-    const endpoint = `${baseUrl}/user/api/v1/user/payment/status/${encodeURIComponent(orderId)}`;
+    const endpoint = `${baseUrl}/user/api/v1/user/payment/status/${encodeURIComponent(lookup)}`;
 
     const response = await fetch(endpoint, {
       method: 'GET',
@@ -42,12 +45,13 @@ export async function GET(request) {
     const result = await response.json();
 
     if (!response.ok) {
+      const errMsg =
+        (result.meta && result.meta.message) ||
+        result.message ||
+        result.error ||
+        'Gagal cek status';
       return NextResponse.json(
-        {
-          success: false,
-          message: result.message || result.error || 'Gagal cek status',
-          raw: result,
-        },
+        { success: false, message: errMsg, raw: result },
         { status: response.status }
       );
     }
@@ -55,10 +59,13 @@ export async function GET(request) {
     const data = result.data || result;
     return NextResponse.json({
       success: true,
-      orderId: data.order_id || orderId,
-      status: data.status || data.payment_status || 'pending',
+      orderId: data.order_id || orderId || null,
+      paymentId: data.payment_id || paymentId || null,
+      status: data.status || data.payment_status || 'PENDING',
       amount: data.amount || null,
-      paidAt: data.paid_at || null,
+      paidAt: data.paid_at || data.updated_at || null,
+      expiredAt: data.expired_at || null,
+      paymentType: data.payment_type || null,
       raw: result,
     });
   } catch (error) {

@@ -46,7 +46,26 @@ export async function POST(request) {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    // Read response as text first, then try to parse as JSON
+    const responseText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      // If JSON parsing fails, return a clean error
+      return NextResponse.json(
+        { 
+          success: false, 
+          message: response.status === 401 
+            ? 'Unauthenticated - KOMERCE_SHIPPING_KEY tidak valid atau tidak aktif' 
+            : 'Gagal hitung ongkir - response tidak valid',
+          statusCode: response.status,
+          raw: responseText.substring(0, 200) // Only include first 200 chars
+        },
+        { status: response.status }
+      );
+    }
+
     if (!response.ok) {
       return NextResponse.json(
         { success: false, message: data.message || 'Gagal hitung ongkir', raw: data },

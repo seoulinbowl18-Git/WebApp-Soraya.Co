@@ -75,26 +75,34 @@ export async function POST(request) {
     const result = await response.json();
 
     if (!response.ok) {
+      const errMsg =
+        (result.meta && result.meta.message) ||
+        result.message ||
+        result.error ||
+        'Gagal membuat QRIS';
       return NextResponse.json(
         {
           success: false,
-          message: result.message || result.error || 'Gagal membuat QRIS',
+          message: errMsg,
           raw: result,
         },
         { status: response.status }
       );
     }
 
-    // Normalize response. Komerce commonly returns qr_string / qr_url / expiry
+    // Normalize response. Komerce returns { meta, data } with payment_id, payment_url, qr_string, status, expired_at
     const data = result.data || result;
     return NextResponse.json({
       success: true,
       orderId: data.order_id || orderId,
       qrString: data.qr_string || data.qris_string || null,
       qrUrl: data.qr_url || data.qris_image_url || null,
+      paymentUrl: data.payment_url || null,
       amount: data.amount || amount,
       expiry: data.expired_at || data.expiry || null,
       paymentId: data.payment_id || data.transaction_id || null,
+      externalId: data.external_id || null,
+      status: data.status || 'PENDING',
       raw: result,
     });
   } catch (error) {

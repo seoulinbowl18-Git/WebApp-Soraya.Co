@@ -20,7 +20,7 @@ export default function CheckoutPage() {
 
   // Order & QRIS state
   const [order, setOrder] = useState(null);
-  const [qris, setQris] = useState(null); // { qrString, qrUrl, amount, expiry }
+  const [qris, setQris] = useState(null); // { qrString, qrUrl, paymentUrl, paymentId, amount, expiry }
   const [qrDataUrl, setQrDataUrl] = useState(''); // dataURL from qrcode lib
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -51,17 +51,20 @@ export default function CheckoutPage() {
 
   // Polling status QRIS
   useEffect(() => {
-    if (!order || paymentMethod !== 'QRIS' || paymentStatus === 'paid') {
+    if (!qris?.paymentId || paymentMethod !== 'QRIS' || paymentStatus === 'PAID') {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/komerce/payment/status?orderId=${order.orderId}`);
+        const res = await fetch(
+          `/api/komerce/payment/status?paymentId=${encodeURIComponent(qris.paymentId)}`
+        );
         const data = await res.json();
         if (data.success && data.status) {
-          setPaymentStatus(data.status);
-          if (['paid', 'settlement', 'success'].includes(String(data.status).toLowerCase())) {
+          const normalized = String(data.status).toUpperCase();
+          setPaymentStatus(normalized);
+          if (['PAID', 'SETTLEMENT', 'SUCCESS'].includes(normalized)) {
             await fetch('/api/komerce/order', {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
@@ -82,7 +85,7 @@ export default function CheckoutPage() {
       }
     }, 4000);
     return () => clearInterval(pollRef.current);
-  }, [order, paymentMethod, paymentStatus]);
+  }, [qris?.paymentId, order?.orderId, paymentMethod, paymentStatus]);
 
   const canSubmit =
     name &&
@@ -182,6 +185,11 @@ export default function CheckoutPage() {
             <div className="text-center">
               <p className="text-xs text-stone-500">Order ID</p>
               <p className="text-sm font-mono font-bold">{order.orderId}</p>
+              {qris.paymentId && (
+                <p className="text-[10px] text-stone-400 font-mono mt-1">
+                  Payment ID: {qris.paymentId}
+                </p>
+              )}
             </div>
 
             <div className="bg-stone-100 border rounded-lg p-4 text-center">
@@ -205,6 +213,21 @@ export default function CheckoutPage() {
               <p className="text-xl font-bold">
                 Rp {Number(qris.amount || grandTotal).toLocaleString('id-ID')}
               </p>
+              {qris.paymentUrl && (
+                <a
+                  href={qris.paymentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-block w-full py-2 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700"
+                >
+                  Buka Halaman Pembayaran →
+                </a>
+              )}
+              {qris.expiry && (
+                <p className="mt-2 text-[10px] text-stone-500">
+                  Berlaku hingga: {new Date(qris.expiry).toLocaleString('id-ID')}
+                </p>
+              )}
             </div>
 
             <div className="text-center space-y-1">
@@ -212,12 +235,12 @@ export default function CheckoutPage() {
                 Status:{' '}
                 <span
                   className={
-                    paymentStatus === 'paid'
+                    ['PAID', 'SETTLEMENT', 'SUCCESS'].includes(String(paymentStatus).toUpperCase())
                       ? 'text-emerald-600'
                       : 'text-amber-600'
                   }
                 >
-                  {paymentStatus || 'pending'}
+                  {paymentStatus || 'PENDING'}
                 </span>
               </p>
               <p className="text-xs text-stone-500">
