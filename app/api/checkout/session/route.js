@@ -31,7 +31,32 @@ export async function POST(request) {
       );
     }
 
-    const subtotal = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 1), 0);
+    // Normalisasi dan validasi harga items — jadikan integer > 0
+    const normalizedItems = items.map((it) => {
+      const rawPrice = it.price ?? it.amount ?? it.cost ?? it.unitPrice ?? it.unit_price ?? 0;
+      const rawQty = it.qty ?? it.quantity ?? 1;
+      return {
+        id: it.id,
+        name: it.name || it.title || 'Produk',
+        image: it.image,
+        price: Math.round(Number(rawPrice) || 0),
+        qty: Math.max(1, Math.round(Number(rawQty) || 1)),
+      };
+    });
+
+    const invalid = normalizedItems.find((it) => !it.price || it.price <= 0);
+    if (invalid) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Item "${invalid.name}" tidak memiliki harga valid. Hapus dari keranjang dan tambahkan ulang.`,
+          debug: { invalidItem: invalid, originalItems: items },
+        },
+        { status: 400 }
+      );
+    }
+
+    const subtotal = normalizedItems.reduce((s, it) => s + it.price * it.qty, 0);
     const shippingCost = Number(shipping.price || 0);
     const grandTotal = Math.round(subtotal + shippingCost);
 
@@ -48,7 +73,7 @@ export async function POST(request) {
       paymentMethod: 'QRIS',
       customer,
       shipping,
-      items,
+      items: normalizedItems,
       subtotal,
       shippingCost,
       grandTotal,

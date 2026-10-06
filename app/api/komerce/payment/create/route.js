@@ -47,6 +47,28 @@ export async function POST(request) {
     const baseUrl = getKomerceBaseUrl();
     const endpoint = `${baseUrl}/user/api/v1/user/payment/create`;
 
+    // Normalisasi items — Komerce wajib { name, quantity, price (int > 0) }
+    const normalizedItems = (items || []).map((it) => {
+      const rawPrice = it.price ?? it.amount ?? it.cost ?? it.unitPrice ?? it.unit_price ?? 0;
+      const rawQty = it.qty ?? it.quantity ?? 1;
+      return {
+        name: String(it.name || it.title || 'Produk').slice(0, 100),
+        quantity: Math.max(1, Math.round(Number(rawQty) || 1)),
+        price: Math.round(Number(rawPrice) || 0),
+      };
+    }).filter((it) => it.price > 0);
+
+    if (normalizedItems.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'Items tidak valid — tidak ada item dengan price > 0',
+          debug: { originalItems: items },
+        },
+        { status: 400 }
+      );
+    }
+
     const payload = {
       order_id: orderId,
       payment_type: 'qris',
@@ -56,11 +78,7 @@ export async function POST(request) {
         email: customerEmail || 'customer@soraya.co',
         phone: customerPhone || '08000000000',
       },
-      items: items.map((it) => ({
-        name: it.name || 'Produk',
-        quantity: it.qty || 1,
-        price: Math.round(it.price || 0),
-      })),
+      items: normalizedItems,
     };
 
     const response = await fetch(endpoint, {

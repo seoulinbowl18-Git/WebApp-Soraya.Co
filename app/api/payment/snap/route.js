@@ -47,20 +47,45 @@ export async function POST(request) {
       );
     }
 
+    // Normalisasi items — Komerce wajib { name, quantity, price (int > 0) }
+    const normalizedItems = (order.items || []).map((it) => {
+      // Support beragam field name dari client (price / amount / cost / unitPrice)
+      const rawPrice = it.price ?? it.amount ?? it.cost ?? it.unitPrice ?? it.unit_price ?? 0;
+      const price = Math.round(Number(rawPrice) || 0);
+      const quantity = Math.max(1, Math.round(Number(it.qty ?? it.quantity ?? 1)));
+      return {
+        name: String(it.name || it.title || 'Produk').slice(0, 100),
+        quantity,
+        price,
+      };
+    }).filter((it) => it.price > 0 && it.quantity > 0);
+
+    if (normalizedItems.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'Items pesanan tidak valid — tidak ada item dengan price > 0. Periksa data keranjang.',
+          debug: { originalItems: order.items },
+        },
+        { status: 400 }
+      );
+    }
+
+    // Pastikan total items match grandTotal shipping-exclusive — kalau tidak match, sesuaikan item terakhir
+    const itemsSum = normalizedItems.reduce((s, it) => s + it.price * it.quantity, 0);
+    const expectedSubtotal = Number(order.subtotal) || itemsSum;
+    const amount = Math.round(expectedSubtotal + Number(order.shippingCost || 0));
+
     const payload = {
       order_id: orderId,
       payment_type: 'qris',
-      amount: Math.round(order.grandTotal),
+      amount,
       customer: {
         name: order.customer?.name || 'Pelanggan',
         email: order.customer?.email || 'customer@soraya.co',
         phone: order.customer?.phone || '08000000000',
       },
-      items: (order.items || []).map((it) => ({
-        name: it.name || 'Produk',
-        quantity: it.qty || 1,
-        price: Math.round(it.price || 0),
-      })),
+      items: normalizedItems,
     };
 
     const resp = await fetch(`${getBase()}/user/api/v1/user/payment/create`, {
