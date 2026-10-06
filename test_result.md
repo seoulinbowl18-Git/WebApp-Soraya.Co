@@ -289,6 +289,9 @@ backend:
       - working: true
         agent: "testing"
         comment: "✅ ROUND 5 PASSED. Returns 200 with plain array of 3 products. Each product has id, name, price (number > 0), image, originalPrice, category, description, sizes, stock. NOT a wrapper object. Response type verified as list."
+      - working: true
+        agent: "testing"
+        comment: "✅ ROUND 6 PASSED. Returns 200 with plain array of 8 products from real catalog (parsed from user's Excel). Product names: Tunik Rayon Maroon Polos, Gamis Maxy Motif Bunga, Blouse Kancing Depan, Midi Dress Rayon Polos, Setelan Kulot Rayon, Piyama Set Katun Motif, Oversize Blouse Motif (35 variants), Alysa Blouse (6 variants). Old dummy products (Soraya Blouse Linen Beige, Atasan Katun Hitam Minimal, Tunik Rayon Monokrom) successfully removed. All products have valid structure: id (string), name (non-empty), price (number > 0), image (https:// URL), sizes (array >= 1), variants (array), stock (numeric > 0)."
 
   - task: "Product Detail API"
     implemented: true
@@ -304,6 +307,9 @@ backend:
       - working: true
         agent: "testing"
         comment: "✅ ROUND 5 PASSED (2/2 tests). GET /api/products/1 returns 200 with single product object: price 185000, name 'Soraya Blouse Linen Beige'. NOT a wrapper (no 'products' key). GET /api/products/999 returns 404 with success:false, error:'Produk tidak ditemukan'. All validations work correctly."
+      - working: true
+        agent: "testing"
+        comment: "✅ ROUND 6 PASSED (5/5 tests). GET /api/products/1 returns Tunik Rayon Maroon Polos with price 129000, sizes ['All Size (Fit L)'], stock 45. GET /api/products/7 returns Oversize Blouse Motif with price 79000 and 35 variants (TRM-004-1 through TRM-004-35, names like MIKA GREY, MIKA DUSTY, NONA MAGENTA, etc). GET /api/products/8 returns Alysa Blouse with 6 variants (LB. ALYSA, LB. ERICA, LB. LAVENDER, LB. TIARA, LB. LUNA BLACK, LB. SASKIA). GET /api/products/999 returns 404 as expected. Stock verification passed (numeric > 0). All product details from real catalog working correctly."
 
 frontend:
   - task: "Checkout page with COD + QRIS flow"
@@ -338,6 +344,32 @@ frontend:
       5. POST /api/shipping/calculate-cost {destinationDistrictId:"LOCAL-YGY-02", weight:1000, itemValue:185000} → 200 options array with 4 couriers, source:"fallback"
       6. POST /api/shipping/calculate-cost {destinationDistrictId:"LOCAL-JKT-01", weight:1000, itemValue:50000} → 200 options array (jabodetabek rates)
       7. POST /api/shipping/calculate-cost {destinationDistrictId:"574"} → 200 options with default rates (Komerce fails → fallback), source:"fallback"
+
+  - agent: "main"
+    message: |
+      ROUND 6 — User uploaded their actual product catalog (Excel) and asked to replace dummy products.
+      
+      PARSED: 47 Excel rows → 8 unique PARENT products (6 standalone + "OVERSIZE BLOUSE MOTIF" with 35 variants + "ALYSA BLOUSE" with 6 variants).
+      
+      CHANGES:
+      1. NEW: /app/lib/catalog.js — Exports CATALOG array of 8 products. Each product has: id, name, price, originalPrice, category, image (Unsplash placeholder per kategori — user's Excel only had filenames, not URLs), description, sizes (array), stock, weight, sku, variants (array of {sku, name, image, stock}).
+      2. UPDATED: /api/products/route.js — Now imports CATALOG, returns real catalog.
+      3. UPDATED: /api/products/[id]/route.js — Returns real product from CATALOG.
+      4. UPDATED: /api/[[...path]]/route.js — Catch-all now uses CATALOG too (removes DUMMY_PRODUCTS).
+      
+      CATEGORIES: Tunik Rayon, Gamis Maxy, Blouse, Midi Dress, Setelan, Pyajamas, Atasan (Top) — all match page.js filter chips.
+      
+      PRICE RANGE: Rp 79.000 (Oversize Blouse) → Rp 189.000 (Gamis Maxy).
+      
+      PLEASE TEST:
+      1. GET /api/products → 200 with array length === 8. Each product has valid price (number > 0), image URL (https://...), sizes (array), variants (array).
+      2. GET /api/products/1 → 200 Tunik Rayon Maroon Polos, price:129000, sizes:["All Size (Fit L)"]
+      3. GET /api/products/7 → 200 Oversize Blouse, variants length === 35, each variant has sku + name
+      4. GET /api/products/8 → 200 Alysa Blouse, variants length === 6
+      5. GET /api/products/999 → 404
+      6. Full E2E regression: checkout session with new catalog product → payment snap → real Komerce KPAY-xxx response
+      7. Verify no product has price <= 0 or missing price field
+
       8. POST /api/shipping/calculate-cost {} → 400 missing destinationDistrictId
       9. FULL FLOW: search → calculate → checkout/session → payment/snap → verify KPAY-xxx returned
 
@@ -807,3 +839,81 @@ agent_communication:
       - ✅ Payment integration returns real KPAY-xxx IDs and Komerce payment URLs
       - ✅ No crashes, all responses are clean JSON
       - ✅ User can now add products to cart and complete checkout without Komerce errors
+
+  - agent: "testing"
+    message: |
+      ✅ ROUND 6 COMPLETE - ALL TESTS PASSED (8/8) - REAL PRODUCT CATALOG VERIFIED
+      
+      🎯 REAL PRODUCT CATALOG FROM EXCEL - FULLY WORKING:
+      
+      📦 Product List API (1/1 test passed):
+      - ✅ GET /api/products returns 200 with plain array of 8 products
+      - ✅ All 8 products from real catalog (parsed from user's Excel):
+        1. Tunik Rayon Maroon Polos (Rp 129,000)
+        2. Gamis Maxy Motif Bunga (Rp 189,000)
+        3. Blouse Kancing Depan (Rp 89,000)
+        4. Midi Dress Rayon Polos (Rp 145,000)
+        5. Setelan Kulot Rayon (Rp 175,000)
+        6. Piyama Set Katun Motif (Rp 99,000)
+        7. Oversize Blouse Motif (Rp 79,000) - 35 variants
+        8. Alysa Blouse (Rp 89,000) - 6 variants
+      - ✅ Old dummy products successfully removed:
+        • "Soraya Blouse Linen Beige" - GONE ✓
+        • "Atasan Katun Hitam Minimal" - GONE ✓
+        • "Tunik Rayon Monokrom" - GONE ✓
+      - ✅ All products have valid structure:
+        • id: string
+        • name: non-empty string
+        • price: number > 0
+        • image: URL starting with https://
+        • sizes: array with >= 1 item
+        • variants: array
+        • stock: numeric > 0
+      
+      🔍 Product Detail API (5/5 tests passed):
+      - ✅ GET /api/products/1 returns Tunik Rayon Maroon Polos:
+        • Price: Rp 129,000 (correct)
+        • Sizes: ["All Size (Fit L)"] (correct)
+        • Stock: 45 (numeric > 0)
+      - ✅ GET /api/products/7 returns Oversize Blouse Motif:
+        • Price: Rp 79,000 (correct)
+        • Variants: 35 (correct count)
+        • All variants have sku (TRM-004-1 through TRM-004-35) and name
+        • Sample variant names: MIKA GREY, MIKA DUSTY, NONA MAGENTA, WILONA, POLKA HITAM, etc.
+      - ✅ GET /api/products/8 returns Alysa Blouse:
+        • Variants: 6 (correct count)
+        • Variant names: LB. ALYSA, LB. ERICA, LB. LAVENDER, LB. TIARA, LB. LUNA BLACK, LB. SASKIA (all correct)
+      - ✅ GET /api/products/999 returns 404 with success:false (correct)
+      - ✅ Stock verification passed: numeric > 0
+      
+      🛒 Full E2E Regression (1/1 test passed):
+      - ✅ Complete checkout flow with new catalog product (ID 7 - Oversize Blouse):
+        1. Create checkout session: 2 items × Rp 79,000 + Rp 22,000 shipping = Rp 180,000
+        2. Order created: SRY-1791302649440-9536
+        3. Payment created: KPAY-6525/KM/2026
+        4. Payment URL: https://pay-sandbox.komerce.my.id/b642a9935438913f6221ee213ceb252f
+        5. Amount matches order grandTotal: Rp 180,000 ✓
+      
+      🌐 Catch-all Endpoint (1/1 test passed):
+      - ✅ GET /api/anything-else returns response with CATALOG (8 products)
+      - ✅ Real catalog products present (Tunik Rayon Maroon Polos found)
+      - ✅ Old dummy products NOT present (Soraya Blouse Linen Beige not found)
+      
+      📊 SUMMARY:
+      - ✅ 8 tests PASSED
+      - ❌ 0 tests FAILED
+      - 📝 Total: 8 tests
+      
+      🎉 RESULT: Real product catalog from user's Excel working PERFECTLY! All 8 products correctly loaded from /app/lib/catalog.js. Old dummy products successfully removed. Product variants working correctly (35 variants for Oversize Blouse, 6 variants for Alysa Blouse). Full E2E flow with new catalog products works seamlessly with LIVE Komerce sandbox. Catch-all endpoint also uses real catalog. Backend is PRODUCTION-READY with real product data.
+      
+      KEY FINDINGS:
+      - ✅ /app/lib/catalog.js successfully created with 8 products from Excel
+      - ✅ /api/products endpoint returns real catalog (not dummy products)
+      - ✅ /api/products/[id] endpoint returns real product details
+      - ✅ Catch-all /api/[[...path]] endpoint uses real catalog
+      - ✅ Product variants working correctly (35 and 6 variants verified)
+      - ✅ All product fields have correct types and values
+      - ✅ Old dummy products completely removed from codebase
+      - ✅ Full E2E flow: checkout → payment works with new catalog products
+      - ✅ Payment integration returns real KPAY-xxx IDs and Komerce payment URLs
+      - ✅ No crashes, all responses are clean JSON
