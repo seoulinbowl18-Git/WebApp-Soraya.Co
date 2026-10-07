@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Header from '@/components/soraya/Header';
+import ProductForm from '@/components/soraya/ProductForm';
 import { formatIDR, formatDateID } from '@/lib/soraya';
 import { toast } from 'sonner';
 
@@ -71,12 +72,6 @@ export default function AdminPage() {
     await fetch(`/api/admin/products/${id}`, { method: 'DELETE', headers: { 'x-admin-key': ADMIN_KEY } });
     toast.success('Produk dihapus'); load();
   }
-  async function createProduct(payload) {
-    const res = await fetch('/api/admin/products', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY }, body: JSON.stringify(payload) });
-    const d = await res.json();
-    if (!res.ok) { toast.error(d.error || 'Gagal buat produk'); return false; }
-    toast.success('Produk ditambahkan'); load(); return true;
-  }
   async function saveBanners(items) {
     const res = await fetch('/api/admin/banners', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY }, body: JSON.stringify({ items }) });
     const d = await res.json();
@@ -124,7 +119,7 @@ export default function AdminPage() {
         {tab === 'affiliates' && <AffiliatesTab data={data.affiliates} onActivate={activateAffiliate} />}
         {tab === 'payouts' && <PayoutsTab data={data.payouts} onStatus={setPayoutStatus} />}
         {tab === 'orders' && <OrdersTab data={data.orders} onStatus={setOrderStatus} />}
-        {tab === 'catalog' && <CatalogTab data={data.products} onPatch={patchProduct} onDelete={deleteProduct} onCreate={createProduct} />}
+        {tab === 'catalog' && <CatalogTab data={data.products} onPatch={patchProduct} onDelete={deleteProduct} reload={load} />}
         {tab === 'banners' && <BannersTab data={data.banners} onSave={saveBanners} />}
       </section>
     </div>
@@ -218,45 +213,16 @@ function OrdersTab({ data, onStatus }) {
   );
 }
 
-function CatalogTab({ data, onPatch, onDelete, onCreate }) {
-  const [adding, setAdding] = useState(false);
-  const [newProd, setNewProd] = useState({ name: '', price: '', category: 'Blouse', image: '', description: '', stock: 10, commissionPct: 10 });
-
-  async function submitNew() {
-    if (!newProd.name || !newProd.price) { toast.error('Nama & harga wajib'); return; }
-    const ok = await onCreate(newProd);
-    if (ok) {
-      setNewProd({ name: '', price: '', category: 'Blouse', image: '', description: '', stock: 10, commissionPct: 10 });
-      setAdding(false);
-    }
-  }
-
+function CatalogTab({ data, onPatch, onDelete, reload }) {
+  const [editing, setEditing] = useState(null); // null | { product } | 'new'
   return (
     <div className="mt-5 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-[#555]">Edit harga, stok, gambar, atau komisi langsung di tabel. Perubahan tersimpan saat kolom di-blur.</p>
-        <button onClick={() => setAdding(!adding)} className="h-10 px-4 bg-black text-white text-sm font-semibold">
-          {adding ? 'Batal' : '+ Tambah Produk'}
+        <p className="text-sm text-[#555]">Klik <b>Edit</b> untuk ubah lengkap (upload gambar, varian, ukuran, dimensi, deskripsi), atau edit cepat harga/komisi langsung di tabel.</p>
+        <button onClick={() => setEditing('new')} className="h-10 px-4 bg-black text-white text-sm font-semibold">
+          + Tambah Produk
         </button>
       </div>
-
-      {adding && (
-        <div className="border border-dashed border-stone-400 p-4 bg-stone-50 space-y-3">
-          <div className="font-bold text-sm">Produk Baru</div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <input placeholder="Nama produk*" value={newProd.name} onChange={(e) => setNewProd({ ...newProd, name: e.target.value })} className="h-10 border border-stone-300 px-3" />
-            <input placeholder="Harga (Rp)*" type="number" value={newProd.price} onChange={(e) => setNewProd({ ...newProd, price: e.target.value })} className="h-10 border border-stone-300 px-3" />
-            <select value={newProd.category} onChange={(e) => setNewProd({ ...newProd, category: e.target.value })} className="h-10 border border-stone-300 px-3">
-              {['Blouse', 'Atasan (Top)', 'Tunik Rayon', 'Gamis Maxy', 'Midi Dress', 'Setelan', 'Pyajamas'].map((c) => <option key={c}>{c}</option>)}
-            </select>
-            <input placeholder="Stok" type="number" value={newProd.stock} onChange={(e) => setNewProd({ ...newProd, stock: e.target.value })} className="h-10 border border-stone-300 px-3" />
-            <input placeholder="URL Gambar" value={newProd.image} onChange={(e) => setNewProd({ ...newProd, image: e.target.value })} className="h-10 border border-stone-300 px-3 col-span-2" />
-            <input placeholder="Deskripsi singkat" value={newProd.description} onChange={(e) => setNewProd({ ...newProd, description: e.target.value })} className="h-10 border border-stone-300 px-3 col-span-2" />
-            <input placeholder="Komisi (%)" type="number" min={0} max={50} value={newProd.commissionPct} onChange={(e) => setNewProd({ ...newProd, commissionPct: e.target.value })} className="h-10 border border-stone-300 px-3" />
-          </div>
-          <button onClick={submitNew} className="h-10 px-5 bg-black text-white text-sm font-semibold">Simpan</button>
-        </div>
-      )}
 
       <div className="border border-[#E5E5E5] overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
@@ -264,7 +230,8 @@ function CatalogTab({ data, onPatch, onDelete, onCreate }) {
             <th className="text-left px-3 py-3">Produk</th>
             <th className="text-right px-3 py-3">Harga</th>
             <th className="text-right px-3 py-3">Stok</th>
-            <th className="text-left px-3 py-3">Gambar URL</th>
+            <th className="text-left px-3 py-3">Varian</th>
+            <th className="text-left px-3 py-3">Ukuran</th>
             <th className="text-right px-3 py-3">Komisi %</th>
             <th className="text-right px-3 py-3">Payout / sale</th>
             <th className="px-3 py-3"></th>
@@ -274,8 +241,11 @@ function CatalogTab({ data, onPatch, onDelete, onCreate }) {
               <tr key={p.id} className="border-t border-[#EEEEEE]">
                 <td className="px-3 py-3">
                   <div className="flex items-center gap-3">
-                    <img src={p.image} className="w-10 h-12 object-cover bg-[#F5F5F5]" alt="" />
-                    <input defaultValue={p.name} onBlur={(e) => e.target.value !== p.name && onPatch(p.id, { name: e.target.value })} className="w-56 h-9 border border-stone-200 px-2 text-sm" />
+                    <img src={p.image} className="w-10 h-12 object-cover bg-[#F5F5F5] rounded" alt="" />
+                    <div>
+                      <div className="font-semibold text-sm">{p.name}</div>
+                      <div className="text-xs text-stone-500">{p.category}</div>
+                    </div>
                   </div>
                 </td>
                 <td className="px-3 py-3 text-right">
@@ -284,22 +254,30 @@ function CatalogTab({ data, onPatch, onDelete, onCreate }) {
                 <td className="px-3 py-3 text-right">
                   <input type="number" defaultValue={p.stock} onBlur={(e) => Number(e.target.value) !== p.stock && onPatch(p.id, { stock: Number(e.target.value) })} className="w-16 h-9 border border-stone-200 px-2 text-right text-sm" />
                 </td>
-                <td className="px-3 py-3">
-                  <input defaultValue={p.image} onBlur={(e) => e.target.value !== p.image && onPatch(p.id, { image: e.target.value })} placeholder="https://…" className="w-full min-w-[200px] h-9 border border-stone-200 px-2 text-xs font-mono" />
-                </td>
+                <td className="px-3 py-3 text-xs text-stone-600">{(p.variants && p.variants.length) ? `${p.variants.length} varian` : '—'}</td>
+                <td className="px-3 py-3 text-xs text-stone-600">{(p.sizes || []).join(', ')}</td>
                 <td className="px-3 py-3 text-right">
                   <input type="number" defaultValue={p.commissionPct ?? 10} min={0} max={50} onBlur={(e) => onPatch(p.id, { commissionPct: Number(e.target.value) })} className="w-14 h-9 border border-stone-200 px-2 text-right text-sm" />
                 </td>
                 <td className="px-3 py-3 text-right font-bold">{formatIDR(Math.round(p.price * (p.commissionPct ?? 10) / 100))}</td>
-                <td className="px-3 py-3 text-right">
+                <td className="px-3 py-3 text-right whitespace-nowrap">
+                  <button onClick={() => setEditing(p)} className="h-8 px-3 bg-stone-800 text-white text-xs font-semibold mr-1">Edit</button>
                   <button onClick={() => onDelete(p.id)} className="h-8 px-2 text-red-600 hover:bg-red-50 text-xs font-semibold">Hapus</button>
                 </td>
               </tr>
             ))}
-            {data.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-[#8A8A8A]">Belum ada produk.</td></tr>}
+            {data.length === 0 && <tr><td colSpan={8} className="text-center py-8 text-[#8A8A8A]">Belum ada produk.</td></tr>}
           </tbody>
         </table>
       </div>
+
+      {editing && (
+        <ProductForm
+          initial={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload?.(); }}
+        />
+      )}
     </div>
   );
 }

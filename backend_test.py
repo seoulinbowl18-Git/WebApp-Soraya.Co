@@ -1,853 +1,531 @@
 #!/usr/bin/env python3
 """
-ROUND 7 Backend Test - Affiliate System + Admin CRUD + Auth + Banners
-Tests all 21 items from ROUND 7 requirements:
-- Affiliate registration, detail, activation, tracking
-- Admin product CRUD with shared store propagation
-- Admin banner management (max 5)
-- Admin order management with 10% commission calculation
-- Auth login/verify OTP
-- Backward compatibility for products endpoint
+ROUND 8 Backend Testing - Image Upload + Enhanced Product Fields
+Tests the new upload endpoint and enhanced product fields (dimensions, variants, sizes, weight, description)
 """
 
 import requests
 import json
-import sys
-import re
+import os
+import time
+from io import BytesIO
 
-# Backend URL - use localhost since we're testing internally
-BASE_URL = "http://localhost:3000"
-ADMIN_KEY = "soraya-admin-2026"
-
-# Global state to share between tests
-test_state = {
-    "affiliate_code": None,
-    "new_product_id": None,
-}
+# Base URL from environment
+BASE_URL = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://keys-manager.preview.emergentagent.com')
+ADMIN_KEY = 'soraya-admin-2026'
 
 def print_test(name, passed, details=""):
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status} - {name}")
+    status = "✅ PASSED" if passed else "❌ FAILED"
+    print(f"{status}: {name}")
     if details:
-        print(f"   {details}")
+        print(f"  Details: {details}")
     print()
 
-def test_01_affiliate_register_valid():
-    """Test 1: POST /api/affiliate/register with valid payload"""
+def test_upload_without_admin_key():
+    """Test 1: POST /api/admin/upload without x-admin-key → 403"""
     print("=" * 80)
-    print("TEST 1: POST /api/affiliate/register with valid payload")
+    print("TEST 1: Upload without admin key")
+    print("=" * 80)
+    
+    try:
+        # Create a simple PNG image (1x1 pixel)
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        
+        files = {'file': ('test.png', BytesIO(png_data), 'image/png')}
+        response = requests.post(f'{BASE_URL}/api/admin/upload', files=files, timeout=10)
+        
+        passed = response.status_code == 403
+        print_test(
+            "Upload without admin key returns 403",
+            passed,
+            f"Status: {response.status_code}, Body: {response.text[:200]}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Upload without admin key", False, f"Exception: {str(e)}")
+        return False
+
+def test_upload_with_wrong_key():
+    """Test 2: POST /api/admin/upload with wrong key → 403"""
+    print("=" * 80)
+    print("TEST 2: Upload with wrong admin key")
+    print("=" * 80)
+    
+    try:
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        
+        files = {'file': ('test.png', BytesIO(png_data), 'image/png')}
+        headers = {'x-admin-key': 'wrong-key-123'}
+        response = requests.post(f'{BASE_URL}/api/admin/upload', files=files, headers=headers, timeout=10)
+        
+        passed = response.status_code == 403
+        print_test(
+            "Upload with wrong admin key returns 403",
+            passed,
+            f"Status: {response.status_code}, Body: {response.text[:200]}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Upload with wrong admin key", False, f"Exception: {str(e)}")
+        return False
+
+def test_upload_valid_image():
+    """Test 3: POST /api/admin/upload with valid image → 200 with url, size, type, name + verify file exists"""
+    print("=" * 80)
+    print("TEST 3: Upload valid image")
+    print("=" * 80)
+    
+    try:
+        # Create a simple PNG image
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        
+        files = {'file': ('test.png', BytesIO(png_data), 'image/png')}
+        headers = {'x-admin-key': ADMIN_KEY}
+        response = requests.post(f'{BASE_URL}/api/admin/upload', files=files, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print_test("Upload valid image", False, f"Status: {response.status_code}, Body: {response.text}")
+            return False, None
+        
+        data = response.json()
+        
+        # Check response structure
+        checks = []
+        checks.append(('success' in data and data['success'], "Has success:true"))
+        checks.append(('url' in data and data['url'].startswith('/uploads/'), f"Has url starting with /uploads/: {data.get('url', 'N/A')}"))
+        checks.append(('size' in data and data['size'] > 0, f"Has size > 0: {data.get('size', 'N/A')}"))
+        checks.append(('type' in data and data['type'] == 'image/png', f"Has type image/png: {data.get('type', 'N/A')}"))
+        checks.append(('name' in data and len(data['name']) > 0, f"Has name: {data.get('name', 'N/A')}"))
+        
+        # Verify file exists on disk
+        file_path = f"/app/public{data.get('url', '')}"
+        file_exists = os.path.exists(file_path)
+        checks.append((file_exists, f"File exists on disk at {file_path}"))
+        
+        # Verify GET /uploads/<name> returns 200
+        if data.get('url'):
+            try:
+                get_response = requests.get(f"{BASE_URL}{data['url']}", timeout=10)
+                checks.append((get_response.status_code == 200, f"GET {data['url']} returns 200 (status: {get_response.status_code})"))
+            except Exception as e:
+                checks.append((False, f"GET {data['url']} failed: {str(e)}"))
+        
+        all_passed = all(check[0] for check in checks)
+        details = "\n  ".join([f"{'✓' if check[0] else '✗'} {check[1]}" for check in checks])
+        
+        print_test("Upload valid image", all_passed, details)
+        return all_passed, data.get('url')
+    except Exception as e:
+        print_test("Upload valid image", False, f"Exception: {str(e)}")
+        return False, None
+
+def test_upload_text_file():
+    """Test 4: POST /api/admin/upload with text file → 400"""
+    print("=" * 80)
+    print("TEST 4: Upload text file (should reject)")
+    print("=" * 80)
+    
+    try:
+        text_data = b'This is a text file, not an image'
+        
+        files = {'file': ('test.txt', BytesIO(text_data), 'text/plain')}
+        headers = {'x-admin-key': ADMIN_KEY}
+        response = requests.post(f'{BASE_URL}/api/admin/upload', files=files, headers=headers, timeout=10)
+        
+        passed = response.status_code == 400
+        data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+        
+        print_test(
+            "Upload text file returns 400",
+            passed,
+            f"Status: {response.status_code}, Error: {data.get('error', 'N/A')}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Upload text file", False, f"Exception: {str(e)}")
+        return False
+
+def test_upload_no_file():
+    """Test 5: POST /api/admin/upload with no file → 400"""
+    print("=" * 80)
+    print("TEST 5: Upload with no file field")
+    print("=" * 80)
+    
+    try:
+        headers = {'x-admin-key': ADMIN_KEY}
+        response = requests.post(f'{BASE_URL}/api/admin/upload', headers=headers, timeout=10)
+        
+        passed = response.status_code == 400
+        data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+        
+        print_test(
+            "Upload with no file returns 400",
+            passed,
+            f"Status: {response.status_code}, Error: {data.get('error', 'N/A')}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Upload with no file", False, f"Exception: {str(e)}")
+        return False
+
+def test_create_product_full_payload():
+    """Test 6: POST /api/admin/products with FULL payload including all new fields"""
+    print("=" * 80)
+    print("TEST 6: Create product with full payload (dimensions, variants, sizes, weight, description)")
     print("=" * 80)
     
     try:
         payload = {
-            "fullName": "Siti Nurhaliza",
-            "email": "siti.nurhaliza@example.com",
-            "phone": "081234567890",
-            "socialLinks": "instagram.com/sitinurhaliza",
-            "payout": {
-                "method": "bca",
-                "accountName": "Siti Nurhaliza",
-                "accountNumber": "1234567890"
+            "name": "Produk Lengkap",
+            "price": 150000,
+            "category": "Blouse",
+            "image": "/uploads/main.jpg",
+            "description": "Deskripsi lengkap bahan dan model",
+            "sizes": ["S", "M", "L", "XL"],
+            "stock": 50,
+            "weight": 350,
+            "dimensions": {
+                "length": 30,
+                "width": 25,
+                "height": 5
+            },
+            "variants": [
+                {"sku": "V1", "name": "Merah", "image": "/uploads/v1.jpg", "stock": 10},
+                {"sku": "V2", "name": "Biru", "image": "/uploads/v2.jpg", "stock": 15}
+            ],
+            "commissionPct": 15
+        }
+        
+        headers = {'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json'}
+        response = requests.post(f'{BASE_URL}/api/admin/products', json=payload, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print_test("Create product with full payload", False, f"Status: {response.status_code}, Body: {response.text}")
+            return False, None
+        
+        data = response.json()
+        product = data.get('product', {})
+        
+        # Verify all fields are preserved
+        checks = []
+        checks.append((product.get('name') == 'Produk Lengkap', f"Name: {product.get('name')}"))
+        checks.append((product.get('price') == 150000, f"Price: {product.get('price')}"))
+        checks.append((product.get('description') == 'Deskripsi lengkap bahan dan model', f"Description preserved"))
+        checks.append((product.get('sizes') == ["S", "M", "L", "XL"], f"Sizes: {product.get('sizes')}"))
+        checks.append((product.get('weight') == 350, f"Weight: {product.get('weight')}"))
+        checks.append((product.get('commissionPct') == 15, f"CommissionPct: {product.get('commissionPct')}"))
+        
+        # Check dimensions
+        dims = product.get('dimensions', {})
+        checks.append((dims.get('length') == 30, f"Dimensions.length: {dims.get('length')}"))
+        checks.append((dims.get('width') == 25, f"Dimensions.width: {dims.get('width')}"))
+        checks.append((dims.get('height') == 5, f"Dimensions.height: {dims.get('height')}"))
+        
+        # Check variants
+        variants = product.get('variants', [])
+        checks.append((len(variants) == 2, f"Variants count: {len(variants)}"))
+        if len(variants) >= 2:
+            checks.append((variants[0].get('sku') == 'V1' and variants[0].get('name') == 'Merah', f"Variant 1: {variants[0]}"))
+            checks.append((variants[1].get('sku') == 'V2' and variants[1].get('name') == 'Biru', f"Variant 2: {variants[1]}"))
+        
+        all_passed = all(check[0] for check in checks)
+        details = "\n  ".join([f"{'✓' if check[0] else '✗'} {check[1]}" for check in checks])
+        
+        print_test("Create product with full payload", all_passed, details)
+        return all_passed, product.get('id')
+    except Exception as e:
+        print_test("Create product with full payload", False, f"Exception: {str(e)}")
+        return False, None
+
+def test_update_product_dimensions_only(product_id):
+    """Test 7: POST /api/admin/products/[id] with ONLY dimensions → verify other fields preserved"""
+    print("=" * 80)
+    print("TEST 7: Update product with only dimensions (verify other fields preserved)")
+    print("=" * 80)
+    
+    if not product_id:
+        print_test("Update product dimensions only", False, "No product ID from previous test")
+        return False
+    
+    try:
+        # Update only dimensions
+        payload = {
+            "dimensions": {
+                "length": 40,
+                "width": 30,
+                "height": 8
             }
         }
-        resp = requests.post(f"{BASE_URL}/api/affiliate/register", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
         
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert "affiliate" in data, "affiliate key missing"
+        headers = {'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json'}
+        response = requests.post(f'{BASE_URL}/api/admin/products/{product_id}', json=payload, headers=headers, timeout=10)
         
-        affiliate = data["affiliate"]
-        assert "code" in affiliate, "affiliate.code missing"
-        assert re.match(r"^AFI-[A-Z0-9]{5}$", affiliate["code"]), f"code pattern mismatch: {affiliate['code']}"
-        assert affiliate.get("status") == "pending", f"status should be 'pending', got {affiliate.get('status')}"
-        assert affiliate.get("commissionPct") == 10, f"commissionPct should be 10, got {affiliate.get('commissionPct')}"
-        assert affiliate.get("fullName") == "Siti Nurhaliza", "fullName mismatch"
-        assert affiliate.get("email") == "siti.nurhaliza@example.com", "email mismatch"
+        if response.status_code != 200:
+            print_test("Update product dimensions only", False, f"Status: {response.status_code}, Body: {response.text}")
+            return False
         
-        # Save code for later tests
-        test_state["affiliate_code"] = affiliate["code"]
+        # Get the product to verify
+        get_response = requests.get(f'{BASE_URL}/api/products/{product_id}', timeout=10)
+        if get_response.status_code != 200:
+            print_test("Update product dimensions only", False, f"Failed to GET product: {get_response.status_code}")
+            return False
         
-        print_test("Affiliate register with valid payload", True, 
-                   f"Code: {affiliate['code']}, status: pending, commissionPct: 10")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate register with valid payload", False, str(e))
-        return False
+        product = get_response.json()
+        
+        # Verify dimensions updated and other fields preserved
+        checks = []
+        dims = product.get('dimensions', {})
+        checks.append((dims.get('length') == 40, f"New dimensions.length: {dims.get('length')}"))
+        checks.append((dims.get('width') == 30, f"New dimensions.width: {dims.get('width')}"))
+        checks.append((dims.get('height') == 8, f"New dimensions.height: {dims.get('height')}"))
+        
+        # Verify other fields preserved
+        checks.append((product.get('name') == 'Produk Lengkap', f"Name preserved: {product.get('name')}"))
+        checks.append((product.get('price') == 150000, f"Price preserved: {product.get('price')}"))
+        checks.append((product.get('description') == 'Deskripsi lengkap bahan dan model', f"Description preserved"))
+        checks.append((len(product.get('variants', [])) == 2, f"Variants preserved: {len(product.get('variants', []))}"))
+        checks.append((product.get('sizes') == ["S", "M", "L", "XL"], f"Sizes preserved: {product.get('sizes')}"))
+        
+        all_passed = all(check[0] for check in checks)
+        details = "\n  ".join([f"{'✓' if check[0] else '✗'} {check[1]}" for check in checks])
+        
+        print_test("Update product dimensions only", all_passed, details)
+        return all_passed
     except Exception as e:
-        print_test("Affiliate register with valid payload", False, f"Exception: {str(e)}")
+        print_test("Update product dimensions only", False, f"Exception: {str(e)}")
         return False
 
-def test_02_affiliate_register_duplicate():
-    """Test 2: POST /api/affiliate/register with duplicate email"""
+def test_update_product_clear_variants(product_id):
+    """Test 8: POST /api/admin/products/[id] with variants:[] → should clear variants"""
     print("=" * 80)
-    print("TEST 2: POST /api/affiliate/register with duplicate email")
+    print("TEST 8: Update product with empty variants array (should clear)")
+    print("=" * 80)
+    
+    if not product_id:
+        print_test("Clear product variants", False, "No product ID from previous test")
+        return False
+    
+    try:
+        payload = {"variants": []}
+        
+        headers = {'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json'}
+        response = requests.post(f'{BASE_URL}/api/admin/products/{product_id}', json=payload, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print_test("Clear product variants", False, f"Status: {response.status_code}, Body: {response.text}")
+            return False
+        
+        data = response.json()
+        product = data.get('product', {})
+        
+        passed = len(product.get('variants', [])) == 0
+        print_test(
+            "Clear product variants",
+            passed,
+            f"Variants after clear: {product.get('variants', [])}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Clear product variants", False, f"Exception: {str(e)}")
+        return False
+
+def test_update_product_empty_sizes(product_id):
+    """Test 9: POST /api/admin/products/[id] with sizes:[] → should default to ["All Size"]"""
+    print("=" * 80)
+    print("TEST 9: Update product with empty sizes array (should default to ['All Size'])")
+    print("=" * 80)
+    
+    if not product_id:
+        print_test("Empty sizes default", False, "No product ID from previous test")
+        return False
+    
+    try:
+        payload = {"sizes": []}
+        
+        headers = {'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json'}
+        response = requests.post(f'{BASE_URL}/api/admin/products/{product_id}', json=payload, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print_test("Empty sizes default", False, f"Status: {response.status_code}, Body: {response.text}")
+            return False
+        
+        data = response.json()
+        product = data.get('product', {})
+        
+        passed = product.get('sizes') == ["All Size"]
+        print_test(
+            "Empty sizes default to ['All Size']",
+            passed,
+            f"Sizes after empty: {product.get('sizes', [])}"
+        )
+        return passed
+    except Exception as e:
+        print_test("Empty sizes default", False, f"Exception: {str(e)}")
+        return False
+
+def test_regression_products_api():
+    """Test 10: REGRESSION - Verify /api/products still returns correct shape"""
+    print("=" * 80)
+    print("TEST 10: REGRESSION - Verify /api/products shape intact")
     print("=" * 80)
     
     try:
-        payload = {
-            "fullName": "Siti Nurhaliza Duplicate",
-            "email": "siti.nurhaliza@example.com",  # Same email as test 1
-            "phone": "081234567891"
-        }
-        resp = requests.post(f"{BASE_URL}/api/affiliate/register", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
+        response = requests.get(f'{BASE_URL}/api/products', timeout=10)
         
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        assert "sudah terdaftar" in data["error"].lower(), f"Error message should mention 'sudah terdaftar', got: {data['error']}"
+        if response.status_code != 200:
+            print_test("Products API regression", False, f"Status: {response.status_code}")
+            return False
         
-        print_test("Affiliate register with duplicate email returns 400", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate register with duplicate email returns 400", False, str(e))
-        return False
+        data = response.json()
+        
+        # Check if response has items, products, and data keys (compatibility shape)
+        checks = []
+        checks.append(('items' in data and isinstance(data['items'], list), f"Has items array: {len(data.get('items', []))} items"))
+        checks.append(('products' in data and isinstance(data['products'], list), f"Has products array: {len(data.get('products', []))} items"))
+        checks.append(('data' in data and isinstance(data['data'], list), f"Has data array: {len(data.get('data', []))} items"))
+        
+        # Check first product has required fields
+        items = data.get('items', [])
+        if len(items) > 0:
+            product = items[0]
+            checks.append(('id' in product, "Product has id"))
+            checks.append(('name' in product, "Product has name"))
+            checks.append(('price' in product and isinstance(product['price'], (int, float)), f"Product has price: {product.get('price')}"))
+            checks.append(('image' in product, "Product has image"))
+            checks.append(('sizes' in product and isinstance(product['sizes'], list), f"Product has sizes array: {product.get('sizes')}"))
+        
+        all_passed = all(check[0] for check in checks)
+        details = "\n  ".join([f"{'✓' if check[0] else '✗'} {check[1]}" for check in checks])
+        
+        print_test("Products API regression", all_passed, details)
+        return all_passed
     except Exception as e:
-        print_test("Affiliate register with duplicate email returns 400", False, f"Exception: {str(e)}")
+        print_test("Products API regression", False, f"Exception: {str(e)}")
         return False
 
-def test_03_affiliate_register_missing_field():
-    """Test 3: POST /api/affiliate/register missing fullName"""
+def test_regression_e2e_checkout():
+    """Test 10b: REGRESSION - Verify E2E checkout flow still works"""
     print("=" * 80)
-    print("TEST 3: POST /api/affiliate/register missing fullName")
-    print("=" * 80)
-    
-    try:
-        payload = {
-            "email": "test@example.com",
-            "phone": "081234567892"
-        }
-        resp = requests.post(f"{BASE_URL}/api/affiliate/register", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        
-        print_test("Affiliate register missing fullName returns 400", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate register missing fullName returns 400", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate register missing fullName returns 400", False, f"Exception: {str(e)}")
-        return False
-
-def test_04_affiliate_detail():
-    """Test 4: GET /api/affiliate/{code} returns full detail with stats"""
-    print("=" * 80)
-    print(f"TEST 4: GET /api/affiliate/{test_state['affiliate_code']}")
-    print("=" * 80)
-    
-    try:
-        code = test_state["affiliate_code"]
-        assert code, "affiliate_code not set from test 1"
-        
-        resp = requests.get(f"{BASE_URL}/api/affiliate/{code}", timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response keys: {list(data.keys())}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "affiliate" in data, "affiliate key missing"
-        assert "stats" in data, "stats key missing"
-        assert "orders" in data, "orders key missing"
-        assert "trend" in data, "trend key missing"
-        
-        # Verify affiliate object
-        affiliate = data["affiliate"]
-        assert affiliate.get("code") == code, f"code mismatch: {affiliate.get('code')} != {code}"
-        
-        # Verify stats object
-        stats = data["stats"]
-        required_stats = ["clicks", "conversions", "approvedConversions", "totalCommission", "available", "trend"]
-        for key in required_stats:
-            assert key in stats, f"stats.{key} missing"
-        
-        # Verify trend array
-        trend = data["trend"]
-        assert isinstance(trend, list), "trend should be array"
-        assert len(trend) == 30, f"trend should have 30 items, got {len(trend)}"
-        
-        # Verify orders array
-        orders = data["orders"]
-        assert isinstance(orders, list), "orders should be array"
-        
-        print_test("Affiliate detail returns full data", True, 
-                   f"affiliate, stats (clicks:{stats['clicks']}, available:{stats['available']}), orders:{len(orders)}, trend:30")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate detail returns full data", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate detail returns full data", False, f"Exception: {str(e)}")
-        return False
-
-def test_05_affiliate_detail_nonexistent():
-    """Test 5: GET /api/affiliate/NONEXISTENT returns 404"""
-    print("=" * 80)
-    print("TEST 5: GET /api/affiliate/NONEXISTENT")
-    print("=" * 80)
-    
-    try:
-        resp = requests.get(f"{BASE_URL}/api/affiliate/NONEXISTENT", timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        
-        print_test("Affiliate detail nonexistent returns 404", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate detail nonexistent returns 404", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate detail nonexistent returns 404", False, f"Exception: {str(e)}")
-        return False
-
-def test_06_affiliate_activate_no_key():
-    """Test 6: POST /api/affiliate/{code}/activate without x-admin-key returns 403"""
-    print("=" * 80)
-    print(f"TEST 6: POST /api/affiliate/{test_state['affiliate_code']}/activate without x-admin-key")
-    print("=" * 80)
-    
-    try:
-        code = test_state["affiliate_code"]
-        assert code, "affiliate_code not set from test 1"
-        
-        resp = requests.post(f"{BASE_URL}/api/affiliate/{code}/activate", json={}, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        
-        print_test("Affiliate activate without admin key returns 403", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate activate without admin key returns 403", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate activate without admin key returns 403", False, f"Exception: {str(e)}")
-        return False
-
-def test_07_affiliate_activate_with_key():
-    """Test 7: POST /api/affiliate/{code}/activate with correct key returns 200"""
-    print("=" * 80)
-    print(f"TEST 7: POST /api/affiliate/{test_state['affiliate_code']}/activate with x-admin-key")
-    print("=" * 80)
-    
-    try:
-        code = test_state["affiliate_code"]
-        assert code, "affiliate_code not set from test 1"
-        
-        headers = {"x-admin-key": ADMIN_KEY}
-        resp = requests.post(f"{BASE_URL}/api/affiliate/{code}/activate", json={}, headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert "affiliate" in data, "affiliate key missing"
-        assert data["affiliate"].get("status") == "active", f"status should be 'active', got {data['affiliate'].get('status')}"
-        
-        print_test("Affiliate activate with admin key returns 200", True, 
-                   f"Status: active")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate activate with admin key returns 200", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate activate with admin key returns 200", False, f"Exception: {str(e)}")
-        return False
-
-def test_08_affiliate_track_click():
-    """Test 8: POST /api/affiliate/track-click returns tracked:true"""
-    print("=" * 80)
-    print("TEST 8: POST /api/affiliate/track-click")
-    print("=" * 80)
-    
-    try:
-        code = test_state["affiliate_code"]
-        assert code, "affiliate_code not set from test 1"
-        
-        payload = {
-            "code": code,
-            "productId": "1"
-        }
-        resp = requests.post(f"{BASE_URL}/api/affiliate/track-click", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert data.get("tracked") == True, f"tracked should be true, got {data.get('tracked')}"
-        
-        print_test("Affiliate track click returns tracked:true", True, 
-                   f"Click tracked for code: {code}, productId: 1")
-        return True
-    except AssertionError as e:
-        print_test("Affiliate track click returns tracked:true", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Affiliate track click returns tracked:true", False, f"Exception: {str(e)}")
-        return False
-
-def test_09_payout_insufficient_balance():
-    """Test 9: POST /api/payouts with insufficient balance returns 400"""
-    print("=" * 80)
-    print("TEST 9: POST /api/payouts with insufficient balance")
-    print("=" * 80)
-    
-    try:
-        code = test_state["affiliate_code"]
-        assert code, "affiliate_code not set from test 1"
-        
-        payload = {
-            "code": code,
-            "amount": 50000
-        }
-        resp = requests.post(f"{BASE_URL}/api/payouts", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        assert "saldo tidak cukup" in data["error"].lower(), f"Error should mention 'saldo tidak cukup', got: {data['error']}"
-        
-        print_test("Payout with insufficient balance returns 400", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Payout with insufficient balance returns 400", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Payout with insufficient balance returns 400", False, f"Exception: {str(e)}")
-        return False
-
-def test_10_admin_products_list():
-    """Test 10: GET /api/admin/products with key returns catalog"""
-    print("=" * 80)
-    print("TEST 10: GET /api/admin/products with x-admin-key")
-    print("=" * 80)
-    
-    try:
-        headers = {"x-admin-key": ADMIN_KEY}
-        resp = requests.get(f"{BASE_URL}/api/admin/products", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response items count: {len(data.get('items', []))}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "items" in data, "items key missing"
-        assert len(data["items"]) == 8, f"Expected 8 products, got {len(data['items'])}"
-        
-        # Verify each product has commissionPct
-        for product in data["items"]:
-            assert "commissionPct" in product, f"Product {product.get('id')} missing commissionPct"
-            assert isinstance(product["commissionPct"], (int, float)), f"commissionPct should be number, got {type(product['commissionPct'])}"
-        
-        print_test("Admin products list returns catalog", True, 
-                   f"Found {len(data['items'])} products, all have commissionPct")
-        return True
-    except AssertionError as e:
-        print_test("Admin products list returns catalog", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin products list returns catalog", False, f"Exception: {str(e)}")
-        return False
-
-def test_11_admin_products_create():
-    """Test 11: POST /api/admin/products creates new product"""
-    print("=" * 80)
-    print("TEST 11: POST /api/admin/products with new product")
-    print("=" * 80)
-    
-    try:
-        headers = {"x-admin-key": ADMIN_KEY}
-        payload = {
-            "name": "Test Product Baru",
-            "price": 150000,
-            "category": "Blouse"
-        }
-        resp = requests.post(f"{BASE_URL}/api/admin/products", json=payload, headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert "product" in data, "product key missing"
-        
-        product = data["product"]
-        assert "id" in product, "product.id missing"
-        assert product.get("name") == "Test Product Baru", f"name mismatch: {product.get('name')}"
-        assert product.get("price") == 150000, f"price mismatch: {product.get('price')}"
-        
-        # Save product ID for later tests
-        test_state["new_product_id"] = product["id"]
-        
-        print_test("Admin products create returns new product", True, 
-                   f"Created product ID: {product['id']}, name: {product['name']}")
-        return True
-    except AssertionError as e:
-        print_test("Admin products create returns new product", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin products create returns new product", False, f"Exception: {str(e)}")
-        return False
-
-def test_12_admin_products_update_propagates():
-    """Test 12: POST /api/admin/products/{id} updates price, verify GET /api/products/{id} returns updated price"""
-    print("=" * 80)
-    print("TEST 12: POST /api/admin/products/{id} with price update + verify propagation")
-    print("=" * 80)
-    
-    try:
-        product_id = test_state["new_product_id"]
-        assert product_id, "new_product_id not set from test 11"
-        
-        # Update price
-        headers = {"x-admin-key": ADMIN_KEY}
-        payload = {"price": 999999}
-        resp = requests.post(f"{BASE_URL}/api/admin/products/{product_id}", json=payload, headers=headers, timeout=10)
-        print(f"Admin update status: {resp.status_code}")
-        data = resp.json()
-        print(f"Admin update response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        
-        # Verify public endpoint returns updated price
-        print(f"\nVerifying GET /api/products/{product_id}...")
-        resp2 = requests.get(f"{BASE_URL}/api/products/{product_id}", timeout=10)
-        print(f"Public get status: {resp2.status_code}")
-        data2 = resp2.json()
-        print(f"Public get response price: {data2.get('price')}")
-        
-        assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
-        assert data2.get("price") == 999999, f"Price should be 999999, got {data2.get('price')}"
-        
-        print_test("Admin product update propagates to public endpoint", True, 
-                   f"Updated price to 999999, verified in GET /api/products/{product_id}")
-        return True
-    except AssertionError as e:
-        print_test("Admin product update propagates to public endpoint", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin product update propagates to public endpoint", False, f"Exception: {str(e)}")
-        return False
-
-def test_13_admin_products_delete():
-    """Test 13: DELETE /api/admin/products/{id} removes product"""
-    print("=" * 80)
-    print("TEST 13: DELETE /api/admin/products/{id}")
-    print("=" * 80)
-    
-    try:
-        product_id = test_state["new_product_id"]
-        assert product_id, "new_product_id not set from test 11"
-        
-        headers = {"x-admin-key": ADMIN_KEY}
-        resp = requests.delete(f"{BASE_URL}/api/admin/products/{product_id}", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        
-        print_test("Admin product delete returns 200", True, 
-                   f"Deleted product ID: {product_id}")
-        return True
-    except AssertionError as e:
-        print_test("Admin product delete returns 200", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin product delete returns 200", False, f"Exception: {str(e)}")
-        return False
-
-def test_14_admin_banners_list():
-    """Test 14: GET /api/admin/banners with key returns 5 banners"""
-    print("=" * 80)
-    print("TEST 14: GET /api/admin/banners with x-admin-key")
-    print("=" * 80)
-    
-    try:
-        headers = {"x-admin-key": ADMIN_KEY}
-        resp = requests.get(f"{BASE_URL}/api/admin/banners", headers=headers, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response items count: {len(data.get('items', []))}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "items" in data, "items key missing"
-        assert len(data["items"]) == 5, f"Expected 5 banners, got {len(data['items'])}"
-        
-        print_test("Admin banners list returns 5 banners", True, 
-                   f"Found {len(data['items'])} banners")
-        return True
-    except AssertionError as e:
-        print_test("Admin banners list returns 5 banners", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin banners list returns 5 banners", False, f"Exception: {str(e)}")
-        return False
-
-def test_15_admin_banners_update():
-    """Test 15: PUT /api/admin/banners updates all banners, verify GET /api/banners returns only active"""
-    print("=" * 80)
-    print("TEST 15: PUT /api/admin/banners + verify public endpoint")
-    print("=" * 80)
-    
-    try:
-        headers = {"x-admin-key": ADMIN_KEY}
-        payload = {
-            "items": [
-                {
-                    "title": "Test Banner 1",
-                    "image": "https://example.com/banner1.jpg",
-                    "cta": "Shop Now",
-                    "href": "/",
-                    "active": True
-                },
-                {
-                    "title": "Test Banner 2",
-                    "image": "https://example.com/banner2.jpg",
-                    "cta": "View",
-                    "href": "/",
-                    "active": False  # Inactive
-                }
-            ]
-        }
-        resp = requests.put(f"{BASE_URL}/api/admin/banners", json=payload, headers=headers, timeout=10)
-        print(f"Admin update status: {resp.status_code}")
-        data = resp.json()
-        print(f"Admin update response items count: {len(data.get('items', []))}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert len(data["items"]) == 2, f"Expected 2 banners, got {len(data['items'])}"
-        
-        # Verify public endpoint returns only active banners
-        print(f"\nVerifying GET /api/banners (public)...")
-        resp2 = requests.get(f"{BASE_URL}/api/banners", timeout=10)
-        print(f"Public get status: {resp2.status_code}")
-        data2 = resp2.json()
-        print(f"Public get response items count: {len(data2.get('items', []))}")
-        
-        assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
-        assert "items" in data2, "items key missing"
-        assert len(data2["items"]) == 1, f"Expected 1 active banner, got {len(data2['items'])}"
-        assert data2["items"][0].get("title") == "Test Banner 1", f"Title mismatch: {data2['items'][0].get('title')}"
-        
-        print_test("Admin banners update + public endpoint filters active", True, 
-                   f"Updated 2 banners, public endpoint returns 1 active banner")
-        return True
-    except AssertionError as e:
-        print_test("Admin banners update + public endpoint filters active", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Admin banners update + public endpoint filters active", False, f"Exception: {str(e)}")
-        return False
-
-def test_16_banners_public():
-    """Test 16: GET /api/banners (public, no key) returns only active banners"""
-    print("=" * 80)
-    print("TEST 16: GET /api/banners (public, no key)")
-    print("=" * 80)
-    
-    try:
-        resp = requests.get(f"{BASE_URL}/api/banners", timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "items" in data, "items key missing"
-        
-        # Verify all items are active
-        for item in data["items"]:
-            assert item.get("active") != False, f"Found inactive banner in public endpoint: {item}"
-        
-        print_test("Public banners endpoint returns only active", True, 
-                   f"Found {len(data['items'])} active banners")
-        return True
-    except AssertionError as e:
-        print_test("Public banners endpoint returns only active", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Public banners endpoint returns only active", False, f"Exception: {str(e)}")
-        return False
-
-def test_17_auth_login():
-    """Test 17: POST /api/auth/login returns otpId and devOtp"""
-    print("=" * 80)
-    print("TEST 17: POST /api/auth/login")
-    print("=" * 80)
-    
-    try:
-        payload = {"phone": "08123456789"}
-        resp = requests.post(f"{BASE_URL}/api/auth/login", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert "otpId" in data, "otpId key missing"
-        assert "devOtp" in data, "devOtp key missing"
-        assert data.get("devOtp") == "123456", f"devOtp should be '123456', got {data.get('devOtp')}"
-        
-        print_test("Auth login returns otpId and devOtp", True, 
-                   f"otpId: {data['otpId']}, devOtp: 123456")
-        return True
-    except AssertionError as e:
-        print_test("Auth login returns otpId and devOtp", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Auth login returns otpId and devOtp", False, f"Exception: {str(e)}")
-        return False
-
-def test_18_auth_verify_otp_valid():
-    """Test 18: POST /api/auth/verify-otp with correct OTP returns user and token"""
-    print("=" * 80)
-    print("TEST 18: POST /api/auth/verify-otp with otp=123456")
-    print("=" * 80)
-    
-    try:
-        payload = {
-            "otp": "123456",
-            "otpId": "OTP-test",
-            "phone": "08123456789"
-        }
-        resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert data.get("success") == True, "success should be true"
-        assert "user" in data, "user key missing"
-        assert "token" in data, "token key missing"
-        
-        user = data["user"]
-        assert "id" in user, "user.id missing"
-        assert "name" in user, "user.name missing"
-        
-        print_test("Auth verify OTP with correct code returns user and token", True, 
-                   f"user.id: {user['id']}, token present")
-        return True
-    except AssertionError as e:
-        print_test("Auth verify OTP with correct code returns user and token", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Auth verify OTP with correct code returns user and token", False, f"Exception: {str(e)}")
-        return False
-
-def test_19_auth_verify_otp_invalid():
-    """Test 19: POST /api/auth/verify-otp with wrong OTP returns 400"""
-    print("=" * 80)
-    print("TEST 19: POST /api/auth/verify-otp with otp=999999")
-    print("=" * 80)
-    
-    try:
-        payload = {
-            "otp": "999999",
-            "otpId": "OTP-test"
-        }
-        resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json=payload, timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response: {json.dumps(data, indent=2)}")
-        
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}"
-        assert "error" in data, "error key missing"
-        
-        print_test("Auth verify OTP with wrong code returns 400", True, 
-                   f"Error: {data['error']}")
-        return True
-    except AssertionError as e:
-        print_test("Auth verify OTP with wrong code returns 400", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Auth verify OTP with wrong code returns 400", False, f"Exception: {str(e)}")
-        return False
-
-def test_20_regression_checkout_payment():
-    """Test 20: REGRESSION - Full E2E checkout session → payment snap → Komerce KPAY-xxx"""
-    print("=" * 80)
-    print("TEST 20: REGRESSION - Full E2E checkout → payment")
+    print("TEST 10b: REGRESSION - E2E checkout flow (session → payment snap → KPAY-xxx)")
     print("=" * 80)
     
     try:
         # Step 1: Create checkout session
-        print("\nStep 1: Create checkout session...")
-        payload = {
+        session_payload = {
             "items": [
-                {
-                    "id": "1",
-                    "qty": 1,
-                    "name": "Tunik Rayon",
-                    "price": 129000,
-                    "image": "https://example.com/tunik.jpg"
-                }
+                {"id": "1", "name": "Test Product", "price": 100000, "qty": 1, "image": "/test.jpg"}
             ],
             "customer": {
-                "name": "Fatimah Zahra",
+                "name": "Budi Santoso",
                 "phone": "081234567890",
-                "email": "fatimah@example.com",
-                "address": "Jl Sudirman 123",
+                "email": "budi@example.com",
+                "address": "Jl. Sudirman No. 123, Jakarta Pusat",
                 "destination": {
                     "id": "LOCAL-JKT-01",
                     "text": "Jakarta Pusat"
                 }
             },
             "shipping": {
-                "service": "jne",
-                "service_name": "JNE REG",
-                "price": 15000,
-                "estimated_days": "2-3"
+                "service": "JNE REG",
+                "cost": 15000,
+                "estimatedDays": "2-3"
             }
         }
-        resp = requests.post(f"{BASE_URL}/api/checkout/session", json=payload, timeout=10)
-        print(f"Checkout status: {resp.status_code}")
-        data = resp.json()
         
-        assert resp.status_code == 200, f"Checkout failed: {resp.status_code}"
-        assert data.get("success") == True, "Checkout success should be true"
-        assert "order" in data, "order key missing"
-        order = data["order"]
-        print(f"✓ Order created: {order['id']} - Rp {order['grandTotal']}")
+        session_response = requests.post(
+            f'{BASE_URL}/api/checkout/session',
+            json=session_payload,
+            timeout=10
+        )
         
-        # Step 2: Create payment
-        print("\nStep 2: Create QRIS payment...")
-        payload = {"orderId": order["id"]}
-        resp = requests.post(f"{BASE_URL}/api/payment/snap", json=payload, timeout=10)
-        print(f"Payment status: {resp.status_code}")
-        data = resp.json()
+        if session_response.status_code != 200:
+            print_test("E2E checkout regression", False, f"Session creation failed: {session_response.status_code}")
+            return False
         
-        assert resp.status_code == 200, f"Payment failed: {resp.status_code}"
-        assert data.get("success") == True, "Payment success should be true"
-        assert "paymentId" in data, "paymentId key missing"
-        assert "redirect_url" in data, "redirect_url key missing"
-        assert data["paymentId"].startswith("KPAY-"), f"Invalid paymentId: {data['paymentId']}"
-        assert "pay-sandbox.komerce.my.id" in data["redirect_url"] or "pay.komerce.my.id" in data["redirect_url"], \
-            f"Invalid redirect_url: {data['redirect_url']}"
+        session_data = session_response.json()
+        order_id = session_data.get('order', {}).get('id')
         
-        print(f"✓ Payment created: {data['paymentId']}")
-        print(f"✓ Payment URL: {data['redirect_url']}")
+        if not order_id:
+            print_test("E2E checkout regression", False, "No orderId in session response")
+            return False
         
-        print_test("REGRESSION - Full E2E checkout → payment works", True, 
-                   f"Order {order['id']} → Payment {data['paymentId']}")
-        return True
-    except AssertionError as e:
-        print_test("REGRESSION - Full E2E checkout → payment works", False, str(e))
-        return False
+        # Step 2: Create payment snap
+        time.sleep(0.5)  # Small delay
+        
+        snap_payload = {"orderId": order_id}
+        snap_response = requests.post(
+            f'{BASE_URL}/api/payment/snap',
+            json=snap_payload,
+            timeout=10
+        )
+        
+        if snap_response.status_code != 200:
+            print_test("E2E checkout regression", False, f"Payment snap failed: {snap_response.status_code}, Body: {snap_response.text}")
+            return False
+        
+        snap_data = snap_response.json()
+        
+        # Verify payment response
+        checks = []
+        checks.append(('paymentId' in snap_data and snap_data['paymentId'].startswith('KPAY-'), f"PaymentId: {snap_data.get('paymentId', 'N/A')}"))
+        checks.append(('redirect_url' in snap_data, f"Has redirect_url: {snap_data.get('redirect_url', 'N/A')[:50]}..."))
+        checks.append(('amount' in snap_data, f"Has amount: {snap_data.get('amount', 'N/A')}"))
+        
+        all_passed = all(check[0] for check in checks)
+        details = "\n  ".join([f"{'✓' if check[0] else '✗'} {check[1]}" for check in checks])
+        
+        print_test("E2E checkout regression", all_passed, details)
+        return all_passed
     except Exception as e:
-        print_test("REGRESSION - Full E2E checkout → payment works", False, f"Exception: {str(e)}")
-        return False
-
-def test_21_products_backward_compat():
-    """Test 21: GET /api/products returns BOTH .items and .products for backward compatibility"""
-    print("=" * 80)
-    print("TEST 21: GET /api/products backward compatibility")
-    print("=" * 80)
-    
-    try:
-        resp = requests.get(f"{BASE_URL}/api/products", timeout=10)
-        print(f"Status: {resp.status_code}")
-        data = resp.json()
-        print(f"Response keys: {list(data.keys())}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "items" in data, "items key missing"
-        assert "products" in data, "products key missing"
-        assert isinstance(data["items"], list), "items should be array"
-        assert isinstance(data["products"], list), "products should be array"
-        assert len(data["items"]) == len(data["products"]), \
-            f"items and products length mismatch: {len(data['items'])} != {len(data['products'])}"
-        
-        print_test("Products endpoint has backward compatibility", True, 
-                   f"Both .items and .products present with {len(data['items'])} products")
-        return True
-    except AssertionError as e:
-        print_test("Products endpoint has backward compatibility", False, str(e))
-        return False
-    except Exception as e:
-        print_test("Products endpoint has backward compatibility", False, f"Exception: {str(e)}")
+        print_test("E2E checkout regression", False, f"Exception: {str(e)}")
         return False
 
 def main():
     print("\n" + "=" * 80)
-    print("ROUND 7 BACKEND TEST - AFFILIATE + ADMIN + AUTH + BANNERS")
-    print("=" * 80)
-    print(f"Backend URL: {BASE_URL}")
-    print(f"Admin Key: {ADMIN_KEY}")
+    print("ROUND 8 BACKEND TESTING - Image Upload + Enhanced Product Fields")
     print("=" * 80 + "\n")
     
     results = []
     
-    # Run all 21 tests in order
-    results.append(("01. Affiliate register valid", test_01_affiliate_register_valid()))
-    results.append(("02. Affiliate register duplicate", test_02_affiliate_register_duplicate()))
-    results.append(("03. Affiliate register missing field", test_03_affiliate_register_missing_field()))
-    results.append(("04. Affiliate detail", test_04_affiliate_detail()))
-    results.append(("05. Affiliate detail nonexistent", test_05_affiliate_detail_nonexistent()))
-    results.append(("06. Affiliate activate no key", test_06_affiliate_activate_no_key()))
-    results.append(("07. Affiliate activate with key", test_07_affiliate_activate_with_key()))
-    results.append(("08. Affiliate track click", test_08_affiliate_track_click()))
-    results.append(("09. Payout insufficient balance", test_09_payout_insufficient_balance()))
-    results.append(("10. Admin products list", test_10_admin_products_list()))
-    results.append(("11. Admin products create", test_11_admin_products_create()))
-    results.append(("12. Admin products update propagates", test_12_admin_products_update_propagates()))
-    results.append(("13. Admin products delete", test_13_admin_products_delete()))
-    results.append(("14. Admin banners list", test_14_admin_banners_list()))
-    results.append(("15. Admin banners update", test_15_admin_banners_update()))
-    results.append(("16. Banners public", test_16_banners_public()))
-    results.append(("17. Auth login", test_17_auth_login()))
-    results.append(("18. Auth verify OTP valid", test_18_auth_verify_otp_valid()))
-    results.append(("19. Auth verify OTP invalid", test_19_auth_verify_otp_invalid()))
-    results.append(("20. REGRESSION checkout payment", test_20_regression_checkout_payment()))
-    results.append(("21. Products backward compat", test_21_products_backward_compat()))
+    # Test 1-5: Upload endpoint
+    results.append(("Upload without admin key", test_upload_without_admin_key()))
+    results.append(("Upload with wrong key", test_upload_with_wrong_key()))
+    upload_passed, upload_url = test_upload_valid_image()
+    results.append(("Upload valid image", upload_passed))
+    results.append(("Upload text file (reject)", test_upload_text_file()))
+    results.append(("Upload no file (reject)", test_upload_no_file()))
+    
+    # Test 6-9: Product CRUD with new fields
+    create_passed, product_id = test_create_product_full_payload()
+    results.append(("Create product with full payload", create_passed))
+    results.append(("Update dimensions only", test_update_product_dimensions_only(product_id)))
+    results.append(("Clear variants", test_update_product_clear_variants(product_id)))
+    results.append(("Empty sizes default", test_update_product_empty_sizes(product_id)))
+    
+    # Test 10: Regression
+    results.append(("Products API regression", test_regression_products_api()))
+    results.append(("E2E checkout regression", test_regression_e2e_checkout()))
     
     # Summary
     print("\n" + "=" * 80)
-    print("TEST SUMMARY")
+    print("SUMMARY")
     print("=" * 80)
     
     passed = sum(1 for _, result in results if result)
     total = len(results)
     
     for name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status} - {name}")
+        status = "✅" if result else "❌"
+        print(f"{status} {name}")
     
-    print("=" * 80)
-    print(f"TOTAL: {passed}/{total} tests passed")
-    print("=" * 80 + "\n")
+    print(f"\nTotal: {passed}/{total} tests passed")
     
     if passed == total:
-        print("🎉 ALL TESTS PASSED! Affiliate system + Admin CRUD + Auth + Banners working perfectly.")
+        print("\n🎉 ALL TESTS PASSED!")
         return 0
     else:
-        print(f"⚠️  {total - passed} test(s) failed. Please review the failures above.")
+        print(f"\n⚠️  {total - passed} test(s) failed")
         return 1
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    exit(main())
